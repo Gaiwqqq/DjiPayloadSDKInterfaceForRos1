@@ -27,14 +27,53 @@
 #include <hms_manager/hms_manager_entry.h>
 #include "camera_manager/test_camera_manager_entry.h"
 
+#include <utils/util_misc.h>
+
+
+#define INFO_MSG(str)        do {std::cout << str << std::endl; } while(false)
+#define INFO_MSG_RED(str)    do {std::cout << "\033[31m" << str << "\033[0m" << std::endl; } while(false)
+#define INFO_MSG_GREEN(str)  do {std::cout << "\033[32m" << str << "\033[0m" << std::endl; } while(false)
+#define INFO_MSG_YELLOW(str) do {std::cout << "\033[33m" << str << "\033[0m" << std::endl; } while(false)
+#define INFO_MSG_BLUE(str)   do {std::cout << "\033[34m" << str << "\033[0m" << std::endl; } while(false)
+
 class PayloadSdkInterface{
 public:
-    PayloadSdkInterface();
+    PayloadSdkInterface(ros::NodeHandle &nh);
     ~PayloadSdkInterface();
-
 
 private:
     ros::NodeHandle nh_;
+    ros::Timer      dji_data_read_timer_;
+
+    T_DjiReturnCode                      djiStat_;
+    T_DjiOsalHandler                     *osalHandler_;
+    T_DjiFcSubscriptionQuaternion        dji_quaternion_data_{0};
+    T_DjiFcSubscriptionVelocity          dji_velocity_data_{0};
+    T_DjiDataTimestamp                   dji_timestamp_data_{0};
+    T_DjiFcSubscriptionGpsPosition       dji_gps_position_data_{0};
+    T_DjiFcSubscriptionPositionFused     dji_position_fused_data_{0};
+    T_DjiFcSubscriptionSingleBatteryInfo dji_single_battery_info_data_{0};
+
+    // data transmission
+    Eigen::Vector3d              quaternion_data_;        // (pitch, roll, yaw)
+    Eigen::Vector3d              velocity_data_;          // (vx, vy, vz)
+    Eigen::Vector3d              gps_position_data_;      // (latitude, longitude, altitude)
+    Eigen::Vector3d              position_fused_data_;    //
+
+    // counters
+    uint32_t                      quaternion_recv_counter_;
+
+    // flags
+    bool                          is_quaternion_disp_;
+
+    // callbacks
+    void djiDataReadCallback(const ros::TimerEvent& event);
+
+    // functions
+    bool djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
+                                E_DjiDataSubscriptionTopicFreq frequency,
+                                DjiReceiveDataOfTopicCallback callback);
+
 };
 
 

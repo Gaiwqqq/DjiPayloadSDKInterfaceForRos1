@@ -185,17 +185,19 @@ endif (LIBUSB_FOUND)
 message(STATUS " - MODULE_APP_SRC: ${MODULE_APP_SRC}")
 
 add_executable(${PROJECT_NAME}
-        src/payload_sdk_interface.cpp
         ${MODULE_APP_SRC}
         ${MODULE_SAMPLE_SRC}
         ${MODULE_COMMON_SRC}
         ${MODULE_HAL_SRC}
+        src/dji_ctrl_midware_node.cpp
+        src/payload_sdk_interface.cpp
+
 )
 target_include_directories(${PROJECT_NAME} PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 target_link_libraries(${PROJECT_NAME} ${FFMPEG_LIBRARIES})
 target_link_libraries(${PROJECT_NAME} /usr/local/lib/libopus.so)
 target_link_libraries(${PROJECT_NAME} usb-1.0)
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_link_libraries(${PROJECT_NAME} m)
+target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES})
