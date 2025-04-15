@@ -67,9 +67,27 @@ endif ()
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
+    roscpp
+    rospy
+    std_msgs
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    message_generation
+)
+
+add_message_files(
+        DIRECTORY msg
+        FILES
+        imu_60.msg
+)
+
+generate_messages(
+        DEPENDENCIES
+        geometry_msgs
+        std_msgs
+        nav_msgs
+        sensor_msgs
 )
 
 catkin_package(

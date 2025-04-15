@@ -32,6 +32,7 @@
 
 #include <mavros_msgs/PositionTarget.h>
 #include <std_msgs/Int8.h>
+#include <payload_sdk_ros1/imu_60.h>
 
 #define INFO_MSG(str)        do {std::cout << str << std::endl; } while(false)
 #define INFO_MSG_RED(str)    do {std::cout << "\033[31m" << str << "\033[0m" << std::endl; } while(false)
@@ -41,9 +42,15 @@
 
 class PayloadSdkInterface{
 public:
+  enum ctrlDevice{
+    CTRL_DEVICE_RC = 0,
+    CTRL_DEVICE_OFFBOARD = 1
+  };
   enum ctrlMode{
-    CTRL_MODE_RC = 0,
-    CTRL_MODE_OFFBOARD = 1
+    NOT_SET = 0,
+    OFFBOARD_VEL_BODY = 1,
+    OFFBOARD_VEL_NED = 2,
+    OFFBOARD_POS_NED = 3
   };
   typedef std::shared_ptr<PayloadSdkInterface> Ptr;
   PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *osal_handler);
@@ -51,8 +58,9 @@ public:
 
 private:
   ros::NodeHandle nh_;
-  ros::Timer      dji_data_read_timer_;
+  ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
+  ros::Publisher  imu_60_pub_;
 
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
@@ -66,33 +74,44 @@ private:
   T_DjiFcSubscriptionSingleBatteryInfo dji_single_battery_info_data_{0};
   T_DjiFcSubscriptionFlightStatus      dji_flight_status_data_{0};
   T_DjiFcSubscriptionDisplaymode       dji_flight_mode_data_{0};
+  T_DjiFcSubscriptionAngularRateFusioned dji_angular_rate_fused_data_{0};
+
+  // ros msgs
+  mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
 
   // data transmission
-  Eigen::Vector3d              acc_body_data_;          // (ax, ay, az)
-  Eigen::Vector3d              quaternion_data_;        // (pitch, roll, yaw)
-  Eigen::Vector3d              velocity_data_;          // (vx, vy, vz)
-  Eigen::Vector3d              gps_position_data_;      // (latitude, longitude, altitude)
-  Eigen::Vector3d              position_fused_data_;    // (latitude, longitude, altitude)
-  double                       altitude_fused_data_;    //
+  Eigen::Vector3d              acc_body_data_;           // (ax, ay, az)
+  Eigen::Vector3d              angular_rate_fused_data_; // (wx, wy, wz)
+  Eigen::Vector3d              quaternion_data_;         // (pitch, roll, yaw)
+  Eigen::Vector3d              velocity_data_;           // (vx, vy, vz)
+  Eigen::Vector3d              gps_position_data_;       // (latitude, longitude, altitude)
+  Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
+  double                       altitude_fused_data_;     //
 
   // counters
   uint32_t                      quaternion_recv_counter_;
 
   // flags
-  bool                          is_quaternion_disp_;
+  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_;
+  ctrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
+  uint16_t                      mavros_cmd_type_mask_velctrl_only_;
+  ros::Time                     last_mavros_cmd_time_;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
   void mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg);
   void offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg);
+  void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
+
+  void publishImu60Data();
 
   // functions
   bool djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
                               E_DjiDataSubscriptionTopicFreq frequency,
                               DjiReceiveDataOfTopicCallback callback);
   void djiDestroySubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic);
-  bool switchCtrlMode(ctrlMode mode);
+  bool switchCtrlDevice(ctrlDevice device);
   template<typename T>
   void readParam(std::string param_name, T &param_val, T default_val);
 };
