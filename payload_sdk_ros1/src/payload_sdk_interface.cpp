@@ -1,11 +1,11 @@
 #include "../include/payload_sdk_ros1/payload_sdk_interface.h"
 
-PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh){
+PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *osal_handler){
   // ros init
   nh_ = nh;
 
   // dji node handler init
-  osalHandler_ = DjiPlatform_GetOsalHandler();
+  dji_osal_handler_ = osal_handler;
 
   dji_quaternion_data_          = {0};
   dji_velocity_data_            = {0};
@@ -24,18 +24,30 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh){
     INFO_MSG_RED("[DJI]: init data subscription module error, quit program");
     return;
   }
+
+  std::map<int, E_DjiDataSubscriptionTopicFreq> freq_map;
+  freq_map[200] = DJI_DATA_SUBSCRIPTION_TOPIC_200_HZ;
+  freq_map[100] = DJI_DATA_SUBSCRIPTION_TOPIC_100_HZ;
+  freq_map[50]  = DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ;
+  freq_map[10]  = DJI_DATA_SUBSCRIPTION_TOPIC_10_HZ;
+  freq_map[5]   = DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ;
+  freq_map[1]   = DJI_DATA_SUBSCRIPTION_TOPIC_1_HZ;
+
   bool dji_init_success = true;
   dji_init_success =
-    djiCreateSubscription("quaternion", DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, nullptr);
+    djiCreateSubscription("quaternion", DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, nullptr);
+    djiCreateSubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, nullptr);
+    djiCreateSubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("pos_fusion", DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, nullptr);
+    djiCreateSubscription("pos_fusion", DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED, freq_map[50], nullptr);
 
   if (dji_init_success){
     dji_data_read_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiDataReadCallback, this);
+    INFO_MSG_GREEN("[DJI]: Payload SDK init success, do topic init success !");
+    INFO_MSG_GREEN("[DJI]: Subscribe to topics: quaternion, velocity, gps_position, pos_fusion");
+    INFO_MSG_GREEN("[DJI]: recv frequency : " << 50 << " Hz");
   }
 }
 

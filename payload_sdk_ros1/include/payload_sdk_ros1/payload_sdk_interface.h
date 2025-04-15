@@ -38,7 +38,8 @@
 
 class PayloadSdkInterface{
 public:
-    PayloadSdkInterface(ros::NodeHandle &nh);
+    typedef std::shared_ptr<PayloadSdkInterface> Ptr;
+    PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *osal_handler);
     ~PayloadSdkInterface();
 
 private:
@@ -46,7 +47,7 @@ private:
     ros::Timer      dji_data_read_timer_;
 
     T_DjiReturnCode                      djiStat_;
-    T_DjiOsalHandler                     *osalHandler_;
+    T_DjiOsalHandler                     *dji_osal_handler_;
     T_DjiFcSubscriptionQuaternion        dji_quaternion_data_{0};
     T_DjiFcSubscriptionVelocity          dji_velocity_data_{0};
     T_DjiDataTimestamp                   dji_timestamp_data_{0};

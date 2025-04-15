@@ -11,10 +11,9 @@ int main(int argc, char **argv){
   Application application(argc, argv);
   char inputChar;
   T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-  T_DjiReturnCode  returnCode;
   T_DjiTestApplyHighPowerHandler applyHighPowerHandler;
 
-  DjiTest_FcSubscriptionRunSample();
+  PayloadSdkInterface::Ptr payloadSdkInterface = make_shared<PayloadSdkInterface>(nh, osalHandler);
 
   ros::spin();
   return 0;
