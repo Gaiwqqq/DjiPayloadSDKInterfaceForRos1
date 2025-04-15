@@ -9,11 +9,13 @@ int main(int argc, char **argv){
   ros::NodeHandle nh("~");
 
   Application application(argc, argv);
-  char inputChar;
   T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
   T_DjiTestApplyHighPowerHandler applyHighPowerHandler;
 
   PayloadSdkInterface::Ptr payloadSdkInterface = make_shared<PayloadSdkInterface>(nh, osalHandler);
+
+  // DjiUser_RunFlightControllerSample();
+  // DjiTest_FcSubscriptionRunSample();
 
   ros::spin();
   return 0;
