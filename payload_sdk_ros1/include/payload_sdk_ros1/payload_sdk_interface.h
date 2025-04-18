@@ -75,6 +75,7 @@ private:
   T_DjiFcSubscriptionFlightStatus      dji_flight_status_data_{0};
   T_DjiFcSubscriptionDisplaymode       dji_flight_mode_data_{0};
   T_DjiFcSubscriptionAngularRateFusioned dji_angular_rate_fused_data_{0};
+  T_DjiFcSubscriptionGpsDetails        dji_gps_details_data_{0};
 
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
@@ -92,7 +93,8 @@ private:
   uint32_t                      quaternion_recv_counter_;
 
   // flags
-  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_, position_fused_ready_flag_, dji_ctrl_first_init_;
+  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_, position_fused_ready_flag_;
+  bool                          is_gps_convergent_, dji_ctrl_first_init_;
   ctrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
@@ -105,6 +107,7 @@ private:
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
 
   void feedPositionDataProcess();
+  void feedGPSDetailsDataProcess();
 
   void publishImu60Data();
 

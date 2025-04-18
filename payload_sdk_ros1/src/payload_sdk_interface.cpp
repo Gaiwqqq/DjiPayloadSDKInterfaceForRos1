@@ -20,9 +20,11 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_flight_status_data_       = {0};
   dji_flight_mode_data_         = {0};
   dji_angular_rate_fused_data_  = {0};
+  dji_gps_details_data_         = {0};
 
   quaternion_recv_counter_      = 0;
   is_quaternion_disp_           = false;
+  is_gps_convergent_            = false;
   cur_ctrl_device_              = CTRL_DEVICE_RC;
   mavros_cmd_heartbeat_ready_   = false;
   position_fused_ready_flag_    = false;
@@ -67,6 +69,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     djiCreateSubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY, freq_map[50], nullptr);
   dji_init_success =
     djiCreateSubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, freq_map[5], nullptr);
+  dji_init_success =
+    djiCreateSubscription("gps_details", DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS, freq_map[5], nullptr);
   dji_init_success =
     djiCreateSubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, freq_map[5], nullptr);
   dji_init_success =
@@ -118,6 +122,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("altitude_fused", DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
   djiDestroySubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY);
   djiDestroySubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION);
+  djiDestroySubscription("gps_details", DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS);
   djiDestroySubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
   djiDestroySubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE);
   INFO_MSG("[DJI]: Destoried all subscription topics");
@@ -202,6 +207,16 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   else
     gps_position_data_ = Eigen::Vector3d(dji_gps_position_data_.x, dji_gps_position_data_.y, dji_gps_position_data_.z);
 
+  // GPS details
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS,
+                                                  (uint8_t *) &dji_gps_details_data_,
+                                                  sizeof(T_DjiFcSubscriptionGpsDetails),
+                                                  &dji_timestamp_data_);
+  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
+    INFO_MSG_RED("[DJI]: get gps details data error, timestamp: "
+                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
   // Position fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED,
                                                  (uint8_t *) &dji_position_fused_data_,
@@ -214,7 +229,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   else{
     feedPositionDataProcess();
   }
-// single battery info
+
   // altitude fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
                                                  (uint8_t *) &dji_altitude_fused_data_,
@@ -375,6 +390,9 @@ void PayloadSdkInterface::feedPositionDataProcess(){
   }
 }
 
+void PayloadSdkInterface::feedGPSDetailsDataProcess(){
+  // todo: 观察gps是否收敛
+}
 
 bool PayloadSdkInterface::djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
                                                 E_DjiDataSubscriptionTopicFreq frequency,
