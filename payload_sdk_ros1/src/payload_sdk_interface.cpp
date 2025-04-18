@@ -25,6 +25,11 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   is_quaternion_disp_           = false;
   cur_ctrl_device_              = CTRL_DEVICE_RC;
   mavros_cmd_heartbeat_ready_   = false;
+  position_fused_ready_flag_    = false;
+  dji_ctrl_first_init_          = true;
+
+  last_mavros_cmd_time_     = ros::Time::now();
+  last_pos_fused_recv_time_ = last_mavros_cmd_time_;
 
   mavros_cmd_type_mask_velctrl_only_ =
     mavros_msgs::PositionTarget::IGNORE_PX  | mavros_msgs::PositionTarget::IGNORE_PY  | mavros_msgs::PositionTarget::IGNORE_PZ  |
@@ -36,16 +41,6 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   djiStat_ = DjiFcSubscription_Init();
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
     INFO_MSG_RED("[DJI]: init data subscription module error, quit program");
-    return;
-  }
-
-  T_DjiFlightControllerRidInfo rid_info;
-  rid_info.latitude  = 22.542812;
-  rid_info.longitude = 113.958902;
-  rid_info.altitude  = 10;
-  djiStat_ = DjiFlightController_Init(rid_info);
-  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-    INFO_MSG_RED("[DJI]: init flight controller error, quit program");
     return;
   }
 
@@ -105,6 +100,16 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
 PayloadSdkInterface::~PayloadSdkInterface(){
 
   INFO_MSG("[DJI]: Payload SDK interface deconstruct");
+  INFO_MSG("[DJI]: Destory flight controller");
+
+  if (cur_ctrl_device_ == CTRL_DEVICE_OFFBOARD)
+    switchCtrlDevice(CTRL_DEVICE_RC);
+
+  djiStat_ = DjiFlightController_DeInit();
+  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    USER_LOG_ERROR("Deinit flight controller module failed, error code:0x%08llX",
+                   djiStat_);
+  }
 
   djiDestroySubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY);
   djiDestroySubscription("angular_rate_fused", DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
@@ -117,22 +122,13 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE);
   INFO_MSG("[DJI]: Destoried all subscription topics");
 
-  INFO_MSG("[DJI]: Destory flight controller");
-
-  if (cur_ctrl_device_ == CTRL_DEVICE_OFFBOARD)
-    switchCtrlDevice(CTRL_DEVICE_RC);
-
-  djiStat_ = DjiFlightController_DeInit();
-  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-    USER_LOG_ERROR("Deinit flight controller module failed, error code:0x%08llX",
-                   djiStat_);
-  }
-
   djiStat_ = DjiFcSubscription_DeInit();
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
     USER_LOG_ERROR("Deinit data subscription module failed, error code:0x%08llX",
                    djiStat_);
   }
+  INFO_MSG("[DJI]: Destoried data subscription module");
+  INFO_MSG("[DJI]: Payload SDK interface deconstruct success... Goodbye!");
 }
 
 void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
@@ -215,9 +211,10 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get position fused data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
-    position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude, dji_position_fused_data_.longitude, dji_position_fused_data_.altitude);
-
+  else{
+    feedPositionDataProcess();
+  }
+// single battery info
   // altitude fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
                                                  (uint8_t *) &dji_altitude_fused_data_,
@@ -240,7 +237,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 
-  // flight mdoe
+  // flight mode
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE,
                                                  (uint8_t *) &dji_flight_mode_data_,
                                                  sizeof(T_DjiFcSubscriptionDisplaymode),
@@ -324,20 +321,23 @@ void PayloadSdkInterface::publishImu60Data(){
   ros::WallTime t = ros::WallTime::now();
   imu60_msg.header.stamp = ros::Time(t.sec, t.nsec);
 
-  imu60_msg.lat   = position_fused_data_.x();
-  imu60_msg.lon   = position_fused_data_.y();
-  imu60_msg.alt   = position_fused_data_.z();
-  imu60_msg.Vx    = velocity_data_.x();
-  imu60_msg.Vy    = velocity_data_.y();
-  imu60_msg.Vz    = velocity_data_.z();
-
+  imu60_msg.lat       = static_cast<float>(position_fused_data_.x());
+  imu60_msg.lon       = static_cast<float>(position_fused_data_.y());
+  imu60_msg.alt       = static_cast<float>(position_fused_data_.z());
+  imu60_msg.Vx        = static_cast<float>(velocity_data_.x());
+  imu60_msg.Vy        = static_cast<float>(velocity_data_.y());
+  imu60_msg.Vz        = static_cast<float>(velocity_data_.z());
 
   // todo: 角度转换存疑，不确定 ！！！！
-  imu60_msg.Pitch = quaternion_data_.x();
-  imu60_msg.Roll  = quaternion_data_.y();
-  imu60_msg.Yaw   = quaternion_data_.z();
-  // todo: 角速度还是角加速度？
-
+  imu60_msg.Pitch     = static_cast<float>(quaternion_data_.x());
+  imu60_msg.Roll      = static_cast<float>(quaternion_data_.y());
+  imu60_msg.Yaw       = static_cast<float>(quaternion_data_.z());
+  imu60_msg.RollRate  = static_cast<float>(angular_rate_fused_data_.x());
+  imu60_msg.PitchRate = static_cast<float>(angular_rate_fused_data_.y());
+  imu60_msg.YawRate   = static_cast<float>(angular_rate_fused_data_.z());
+  imu60_msg.Ax        = static_cast<float>(acc_body_data_.x());
+  imu60_msg.Ay        = static_cast<float>(acc_body_data_.y());
+  imu60_msg.Az        = static_cast<float>(acc_body_data_.z());
 
   imu60_msg.SensorStatus = 25;
   imu60_msg.WorkStatus   = 8;
@@ -345,6 +345,36 @@ void PayloadSdkInterface::publishImu60Data(){
 
   imu_60_pub_.publish(imu60_msg);
 }
+
+void PayloadSdkInterface::feedPositionDataProcess(){
+  position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude, dji_position_fused_data_.longitude, dji_position_fused_data_.altitude);
+  ros::Time cur_time = ros::Time::now();
+  double duration = (cur_time - last_pos_fused_recv_time_).toSec();
+  last_mavros_cmd_time_ = cur_time;
+
+  if (duration > 0.5 && position_fused_ready_flag_)
+    position_fused_ready_flag_ = false;
+  else if (duration <= 0.1 && !position_fused_ready_flag_){
+    position_fused_ready_flag_ = true;
+    if (dji_ctrl_first_init_){
+      dji_ctrl_first_init_ = false;
+      T_DjiFlightControllerRidInfo rid_info;
+      // rid_info.latitude  = 22.542812;
+      // rid_info.longitude = 113.958902;
+      // rid_info.altitude  = 10;
+      rid_info.latitude  = dji_position_fused_data_.latitude;
+      rid_info.longitude = dji_position_fused_data_.longitude;
+      rid_info.altitude  = dji_position_fused_data_.altitude;
+      djiStat_ = DjiFlightController_Init(rid_info);
+      if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        INFO_MSG_RED("[DJI]: init flight controller error, quit program");
+        exit(1);
+      }
+      INFO_MSG_GREEN("\n[DJI]: *** DJI offboard controller first init success !");
+    }
+  }
+}
+
 
 bool PayloadSdkInterface::djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
                                                 E_DjiDataSubscriptionTopicFreq frequency,

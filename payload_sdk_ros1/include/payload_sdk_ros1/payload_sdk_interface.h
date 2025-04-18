@@ -60,7 +60,7 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
-  ros::Publisher  imu_60_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_;
 
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
@@ -92,17 +92,19 @@ private:
   uint32_t                      quaternion_recv_counter_;
 
   // flags
-  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_;
+  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_, position_fused_ready_flag_, dji_ctrl_first_init_;
   ctrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
-  ros::Time                     last_mavros_cmd_time_;
+  ros::Time                     last_mavros_cmd_time_, last_pos_fused_recv_time_;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
   void mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg);
   void offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg);
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
+
+  void feedPositionDataProcess();
 
   void publishImu60Data();
 

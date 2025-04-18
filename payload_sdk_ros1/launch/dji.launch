@@ -3,8 +3,4 @@
         <param name="dji/topic_nav_pub" value="/guandao1" type="string"/>
         <param name="dji/topic_mavros_sub" value="/mavros/setpoint_raw/local" type="string"/>
     </node>
-
-    <node name="data_trans_node" pkg="data_trans" type="data_trans_node" output="screen" >
-        <param name="data_trans/odom_sub_topic" value="/mavros/local_position/odom" type="string"/>
-    </node>
 </launch>
