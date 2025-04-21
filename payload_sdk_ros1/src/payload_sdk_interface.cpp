@@ -29,6 +29,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   mavros_cmd_heartbeat_ready_   = false;
   position_fused_ready_flag_    = false;
   dji_ctrl_first_init_          = true;
+  gps_ready_                    = false;
 
   last_mavros_cmd_time_     = ros::Time::now();
   last_pos_fused_recv_time_ = last_mavros_cmd_time_;
@@ -77,7 +78,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
 
   if (dji_init_success){
-    dji_data_read_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiDataReadCallback, this);
+    dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiDataReadCallback, this);
     dji_flyctrl_pub_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiFlyCtrlPubCallback, this);
     dji_flyctrl_pub_timer_.stop();
     INFO_MSG_GREEN("[DJI]: Payload SDK init success, do topic init success !");
@@ -99,6 +100,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   offboard_switch_sub_ = nh_.subscribe("/dji/offboard_switch", 2, &PayloadSdkInterface::offboardSwitchCallback,
                                         this, ros::TransportHints().tcpNoDelay());
   imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
+  odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
 }
 
 PayloadSdkInterface::~PayloadSdkInterface(){
@@ -215,6 +217,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get gps details data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }else{
+    feedGPSDetailsDataProcess();
   }
 
   // Position fused
@@ -264,6 +268,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 
   // ----------------------- ROS publish -----------------------------//
   publishImu60Data();
+  publishOdomData();
 }
 
 void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
@@ -304,6 +309,10 @@ void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::C
 
 void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg){
   std_msgs::Int8 mode = *msg;
+  if (!gps_ready_ || !position_fused_ready_flag_ || !mavros_cmd_heartbeat_ready_){
+    INFO_MSG_RED("[DJI]: Not ready, Can't switch control device !");
+    return ;
+  }
   if (mode.data != 0 && cur_ctrl_device_ == CTRL_DEVICE_RC){
     switchCtrlDevice(CTRL_DEVICE_OFFBOARD);
     if (mode.data == 1){
@@ -361,8 +370,43 @@ void PayloadSdkInterface::publishImu60Data(){
   imu_60_pub_.publish(imu60_msg);
 }
 
+void PayloadSdkInterface::publishOdomData(){
+  if (!gps_ready_) return ;
+  nav_msgs::Odometry odom;
+  odom.header.stamp            = ros::Time::now();
+  odom.header.frame_id         = "world";
+  odom.pose.pose.position.x    = xyz_pos_.x();
+  odom.pose.pose.position.y    = xyz_pos_.y();
+  odom.pose.pose.position.z    = xyz_pos_.z();
+
+  Eigen::Quaterniond quat_pos_(
+    Eigen::AngleAxisd(quaternion_data_.z(), Eigen::Vector3d::UnitZ()) *
+    Eigen::AngleAxisd(quaternion_data_.x(), Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(quaternion_data_.y(), Eigen::Vector3d::UnitX())
+  );
+  odom.pose.pose.orientation.x = quat_pos_.x();
+  odom.pose.pose.orientation.y = quat_pos_.y();
+  odom.pose.pose.orientation.z = quat_pos_.z();
+  odom.pose.pose.orientation.w = quat_pos_.w();
+
+  odom.twist.twist.linear.x    = velocity_data_.x();
+  odom.twist.twist.linear.y    = velocity_data_.y();
+  odom.twist.twist.linear.z    = velocity_data_.z();
+  odom.twist.twist.angular.x   = angular_rate_fused_data_.x();
+  odom.twist.twist.angular.y   = angular_rate_fused_data_.y();
+  odom.twist.twist.angular.z   = angular_rate_fused_data_.z();
+
+  odom_trans_pub_.publish(odom);
+}
+
 void PayloadSdkInterface::feedPositionDataProcess(){
-  position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude, dji_position_fused_data_.longitude, dji_position_fused_data_.altitude);
+  position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude,
+                                         dji_position_fused_data_.longitude,
+                                         dji_position_fused_data_.altitude);
+  if (gps_ready_){
+    xyz_pos_ = NEUtoXYZ(position_fused_data_);
+  }
+
   ros::Time cur_time = ros::Time::now();
   double duration = (cur_time - last_pos_fused_recv_time_).toSec();
   last_mavros_cmd_time_ = cur_time;
@@ -371,7 +415,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
     position_fused_ready_flag_ = false;
   else if (duration <= 0.1 && !position_fused_ready_flag_){
     position_fused_ready_flag_ = true;
-    if (dji_ctrl_first_init_){
+    if (dji_ctrl_first_init_ && gps_ready_){
       dji_ctrl_first_init_ = false;
       T_DjiFlightControllerRidInfo rid_info;
       // rid_info.latitude  = 22.542812;
@@ -391,7 +435,13 @@ void PayloadSdkInterface::feedPositionDataProcess(){
 }
 
 void PayloadSdkInterface::feedGPSDetailsDataProcess(){
-  // todo: 观察gps是否收敛
+  gps_pos_accuracy_ = dji_gps_details_data_.pdop;
+  if (gps_pos_accuracy_ <= 2.0 && !gps_ready_){
+    gps_ready_ = true;
+    enu_pos_init_ = position_fused_data_;
+    INFO_MSG_GREEN("[DJI]: GPS position accuracy is good, ready to fly !");
+    INFO_MSG_GREEN("[DJI]: GPS INIT position: " << position_fused_data_.transpose());
+  }
 }
 
 bool PayloadSdkInterface::djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
@@ -462,3 +512,34 @@ bool PayloadSdkInterface::switchCtrlDevice(ctrlDevice device){
   }
   return true;
 }
+
+Eigen::Vector3d PayloadSdkInterface::xyztoNEU(const Eigen::Vector3d& pos){
+  double Ax=6383487.606;
+  double Bx=5357.31;
+  double Ay=6367449.134;
+  double By=32077.0;
+  double dPI=57.295779512;
+  double cos_lat = cos(enu_pos_init_.x() / dPI);
+  double longi = enu_pos_init_.y() + (pos(0) * dPI) / (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat);
+  double lati = enu_pos_init_.x() + (pos(1) * dPI) / (Ay - By * cos_lat * cos_lat);
+  double alt = pos(2) + enu_pos_init_.z();
+  return Eigen::Vector3d(lati, longi, alt);
+}
+
+Eigen::Vector3d PayloadSdkInterface::NEUtoXYZ(const Eigen::Vector3d& enu){
+  double Ax = 6383487.606;
+  double Bx = 5357.31;
+  double Ay = 6367449.134;
+  double By = 32077.0;
+  double dPI = 57.295779512;
+
+  double cos_lat = cos(enu_pos_init_.x() / dPI);
+  double sin_lat = sin(enu_pos_init_.x() / dPI);
+
+  double x = ((enu.y() - enu_pos_init_.y()) * (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat)) / dPI;
+  double y = ((enu.x() - enu_pos_init_.x()) * (Ay - By * cos_lat * cos_lat)) / dPI;
+  double z = enu.z() - enu_pos_init_.z();
+
+  return Eigen::Vector3d(x, y, z);
+}
+

@@ -32,6 +32,7 @@
 
 #include <mavros_msgs/PositionTarget.h>
 #include <std_msgs/Int8.h>
+#include <nav_msgs/Odometry.h>
 #include <payload_sdk_ros1/imu_60.h>
 
 #define INFO_MSG(str)        do {std::cout << str << std::endl; } while(false)
@@ -60,7 +61,7 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
-  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_;
 
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
@@ -89,6 +90,10 @@ private:
   Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
   double                       altitude_fused_data_;     //
 
+  Eigen::Vector3d              enu_pos_init_;            // (latitude, longitude, altitude)
+  Eigen::Vector3d              xyz_pos_;                 // (x, y, z)
+  double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
+
   // counters
   uint32_t                      quaternion_recv_counter_;
 
@@ -99,6 +104,7 @@ private:
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
   ros::Time                     last_mavros_cmd_time_, last_pos_fused_recv_time_;
+  bool                          gps_ready_;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
@@ -110,6 +116,7 @@ private:
   void feedGPSDetailsDataProcess();
 
   void publishImu60Data();
+  void publishOdomData();
 
   // functions
   bool djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
@@ -119,7 +126,9 @@ private:
   bool switchCtrlDevice(ctrlDevice device);
   template<typename T>
   void readParam(std::string param_name, T &param_val, T default_val);
-};
 
+  Eigen::Vector3d xyztoNEU(const Eigen::Vector3d& pos);
+  Eigen::Vector3d NEUtoXYZ(const Eigen::Vector3d& enu);
+};
 
 #endif //PAYLOAD_SDK_INTERFACE_H
