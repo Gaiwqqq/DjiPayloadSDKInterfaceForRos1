@@ -438,7 +438,7 @@ void PayloadSdkInterface::feedGPSDetailsDataProcess(){
   gps_pos_accuracy_ = dji_gps_details_data_.pdop;
   if (gps_pos_accuracy_ <= 2.0 && !gps_ready_){
     gps_ready_ = true;
-    enu_pos_init_ = position_fused_data_;
+    neu_pos_init_ = position_fused_data_;
     INFO_MSG_GREEN("[DJI]: GPS position accuracy is good, ready to fly !");
     INFO_MSG_GREEN("[DJI]: GPS INIT position: " << position_fused_data_.transpose());
   }
@@ -519,10 +519,11 @@ Eigen::Vector3d PayloadSdkInterface::xyztoNEU(const Eigen::Vector3d& pos){
   double Ay=6367449.134;
   double By=32077.0;
   double dPI=57.295779512;
-  double cos_lat = cos(enu_pos_init_.x() / dPI);
-  double longi = enu_pos_init_.y() + (pos(0) * dPI) / (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat);
-  double lati = enu_pos_init_.x() + (pos(1) * dPI) / (Ay - By * cos_lat * cos_lat);
-  double alt = pos(2) + enu_pos_init_.z();
+
+  double cos_lat = cos(neu_pos_init_.x() / dPI);
+  double longi = neu_pos_init_.y() + (pos(0) * dPI) / (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat);
+  double lati = neu_pos_init_.x() + (pos(1) * dPI) / (Ay - By * cos_lat * cos_lat);
+  double alt = pos(2) + neu_pos_init_.z();
   return Eigen::Vector3d(lati, longi, alt);
 }
 
@@ -533,12 +534,12 @@ Eigen::Vector3d PayloadSdkInterface::NEUtoXYZ(const Eigen::Vector3d& enu){
   double By = 32077.0;
   double dPI = 57.295779512;
 
-  double cos_lat = cos(enu_pos_init_.x() / dPI);
-  double sin_lat = sin(enu_pos_init_.x() / dPI);
+  double cos_lat = cos(neu_pos_init_.x() / dPI);
+  double sin_lat = sin(neu_pos_init_.x() / dPI);
 
-  double x = ((enu.y() - enu_pos_init_.y()) * (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat)) / dPI;
-  double y = ((enu.x() - enu_pos_init_.x()) * (Ay - By * cos_lat * cos_lat)) / dPI;
-  double z = enu.z() - enu_pos_init_.z();
+  double x = ((enu.y() - neu_pos_init_.y()) * (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat)) / dPI;
+  double y = ((enu.x() - neu_pos_init_.x()) * (Ay - By * cos_lat * cos_lat)) / dPI;
+  double z = enu.z() - neu_pos_init_.z();
 
   return Eigen::Vector3d(x, y, z);
 }

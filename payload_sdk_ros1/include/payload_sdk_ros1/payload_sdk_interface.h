@@ -90,7 +90,7 @@ private:
   Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
   double                       altitude_fused_data_;     //
 
-  Eigen::Vector3d              enu_pos_init_;            // (latitude, longitude, altitude)
+  Eigen::Vector3d              neu_pos_init_;            // (latitude, longitude, altitude)
   Eigen::Vector3d              xyz_pos_;                 // (x, y, z)
   double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
 
