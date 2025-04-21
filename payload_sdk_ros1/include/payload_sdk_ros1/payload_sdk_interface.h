@@ -32,6 +32,7 @@
 
 #include <mavros_msgs/PositionTarget.h>
 #include <std_msgs/Int8.h>
+#include <sensor_msgs/Imu.h>
 #include <nav_msgs/Odometry.h>
 #include <payload_sdk_ros1/imu_60.h>
 
@@ -61,7 +62,7 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
-  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_;
 
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
@@ -120,6 +121,7 @@ private:
 
   void publishImu60Data();
   void publishOdomData();
+  void publishImuMavrosData();
 
   // functions
   bool djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,

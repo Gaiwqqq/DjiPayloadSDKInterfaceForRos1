@@ -270,6 +270,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   // ----------------------- ROS publish -----------------------------//
   publishImu60Data();
   publishOdomData();
+  publishImuMavrosData();
 }
 
 void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
@@ -399,6 +400,32 @@ void PayloadSdkInterface::publishOdomData(){
 
   odom_trans_pub_.publish(odom);
 }
+
+void PayloadSdkInterface::publishImuMavrosData(){
+  if (!gps_ready_) return ;
+  sensor_msgs::Imu imu_msg;
+
+  imu_msg.header.stamp = ros::Time::now();
+  imu_msg.header.frame_id = "world";
+
+  Eigen::Quaterniond quat_pos_(
+    Eigen::AngleAxisd(quaternion_data_.z(), Eigen::Vector3d::UnitZ()) *
+    Eigen::AngleAxisd(quaternion_data_.x(), Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(quaternion_data_.y(), Eigen::Vector3d::UnitX())
+  );
+  imu_msg.orientation.x         = quat_pos_.x();
+  imu_msg.orientation.y         = quat_pos_.y();
+  imu_msg.orientation.z         = quat_pos_.z();
+  imu_msg.orientation.w         = quat_pos_.w();
+  imu_msg.linear_acceleration.x = acc_body_data_.x();
+  imu_msg.linear_acceleration.y = acc_body_data_.y();
+  imu_msg.linear_acceleration.z = acc_body_data_.z();
+  imu_msg.angular_velocity.x    = angular_rate_fused_data_.x();
+  imu_msg.angular_velocity.y    = angular_rate_fused_data_.y();
+  imu_msg.angular_velocity.z    = angular_rate_fused_data_.z();
+  imu_trans_pub_.publish(imu_msg);
+}
+
 
 void PayloadSdkInterface::feedPositionDataProcess(){
   position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude,
