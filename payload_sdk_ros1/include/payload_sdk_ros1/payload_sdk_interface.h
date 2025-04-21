@@ -106,6 +106,9 @@ private:
   ros::Time                     last_mavros_cmd_time_, last_pos_fused_recv_time_;
   bool                          gps_ready_;
 
+  // throttles
+  double                        _gps_accuracy_thres;
+
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
   void mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg);
@@ -127,8 +130,8 @@ private:
   template<typename T>
   void readParam(std::string param_name, T &param_val, T default_val);
 
-  Eigen::Vector3d xyztoNEU(const Eigen::Vector3d& pos);
-  Eigen::Vector3d NEUtoXYZ(const Eigen::Vector3d& enu);
+  Eigen::Vector3d xyz2NEU(const Eigen::Vector3d& pos);
+  Eigen::Vector3d NEU2XYZ(const Eigen::Vector3d& enu);
 };
 
 #endif //PAYLOAD_SDK_INTERFACE_H

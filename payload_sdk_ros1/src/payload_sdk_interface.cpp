@@ -77,6 +77,19 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_init_success =
     djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
 
+  // -------------------- ros init --------------------------//
+  std::string topic_nav_pub, topic_mavros_sub;
+  readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
+  readParam<std::string>("dji/topic_mavros_sub", topic_mavros_sub, "/mavros/setpoint_raw/local");
+  readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
+
+  mavros_cmd_sub_      = nh_.subscribe(topic_mavros_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
+                                        this , ros::TransportHints().tcpNoDelay());
+  offboard_switch_sub_ = nh_.subscribe("/dji/offboard_switch", 2, &PayloadSdkInterface::offboardSwitchCallback,
+                                        this, ros::TransportHints().tcpNoDelay());
+  imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
+  odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
+
   if (dji_init_success){
     dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiDataReadCallback, this);
     dji_flyctrl_pub_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiFlyCtrlPubCallback, this);
@@ -89,18 +102,6 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     INFO_MSG_RED("[DJI]: Do NOT launch timer! Quit program");
     return ;
   }
-
-  // -------------------- ros init --------------------------//
-  std::string topic_nav_pub, topic_mavros_sub;
-  readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
-  readParam<std::string>("dji/topic_mavros_sub", topic_mavros_sub, "/mavros/setpoint_raw/local");
-
-  mavros_cmd_sub_      = nh_.subscribe(topic_mavros_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
-                                        this , ros::TransportHints().tcpNoDelay());
-  offboard_switch_sub_ = nh_.subscribe("/dji/offboard_switch", 2, &PayloadSdkInterface::offboardSwitchCallback,
-                                        this, ros::TransportHints().tcpNoDelay());
-  imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
-  odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
 }
 
 PayloadSdkInterface::~PayloadSdkInterface(){
@@ -404,7 +405,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
                                          dji_position_fused_data_.longitude,
                                          dji_position_fused_data_.altitude);
   if (gps_ready_){
-    xyz_pos_ = NEUtoXYZ(position_fused_data_);
+    xyz_pos_ = NEU2XYZ(position_fused_data_);
   }
 
   ros::Time cur_time = ros::Time::now();
@@ -436,7 +437,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
 
 void PayloadSdkInterface::feedGPSDetailsDataProcess(){
   gps_pos_accuracy_ = dji_gps_details_data_.pdop;
-  if (gps_pos_accuracy_ <= 2.0 && !gps_ready_){
+  if (gps_pos_accuracy_ <= _gps_accuracy_thres && !gps_ready_){
     gps_ready_ = true;
     neu_pos_init_ = position_fused_data_;
     INFO_MSG_GREEN("[DJI]: GPS position accuracy is good, ready to fly !");
@@ -513,7 +514,7 @@ bool PayloadSdkInterface::switchCtrlDevice(ctrlDevice device){
   return true;
 }
 
-Eigen::Vector3d PayloadSdkInterface::xyztoNEU(const Eigen::Vector3d& pos){
+Eigen::Vector3d PayloadSdkInterface::xyz2NEU(const Eigen::Vector3d& pos){
   double Ax=6383487.606;
   double Bx=5357.31;
   double Ay=6367449.134;
@@ -527,7 +528,7 @@ Eigen::Vector3d PayloadSdkInterface::xyztoNEU(const Eigen::Vector3d& pos){
   return Eigen::Vector3d(lati, longi, alt);
 }
 
-Eigen::Vector3d PayloadSdkInterface::NEUtoXYZ(const Eigen::Vector3d& enu){
+Eigen::Vector3d PayloadSdkInterface::NEU2XYZ(const Eigen::Vector3d& enu){
   double Ax = 6383487.606;
   double Bx = 5357.31;
   double Ay = 6367449.134;
@@ -543,4 +544,3 @@ Eigen::Vector3d PayloadSdkInterface::NEUtoXYZ(const Eigen::Vector3d& enu){
 
   return Eigen::Vector3d(x, y, z);
 }
-
