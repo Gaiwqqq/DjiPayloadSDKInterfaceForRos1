@@ -21,6 +21,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_flight_mode_data_         = {0};
   dji_angular_rate_fused_data_  = {0};
   dji_gps_details_data_         = {0};
+  dji_ctrl_device_data_         = {0};
 
   quaternion_recv_counter_      = 0;
   is_quaternion_disp_           = false;
@@ -76,6 +77,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     djiCreateSubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, freq_map[5], nullptr);
   dji_init_success =
     djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
+  dji_init_success =
+    djiCreateSubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, freq_map[1], nullptr);
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_mavros_sub;
@@ -96,7 +99,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     dji_flyctrl_pub_timer_.stop();
     INFO_MSG_GREEN("[DJI]: Payload SDK init success, do topic init success !");
     INFO_MSG_GREEN("[DJI]: Subscribe to topics: quaternion, velocity, gps_position, pos_fusion");
-    INFO_MSG_GREEN("[DJI]: recv frequency : " << 50 << " Hz");
+    INFO_MSG_GREEN("[DJI]: data publish max frequency : " << 50 << " Hz");
   }else{
     INFO_MSG_RED("[DJI]: Payload SDK init failed, do topic init failed !");
     INFO_MSG_RED("[DJI]: Do NOT launch timer! Quit program");
@@ -114,8 +117,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
 
   djiStat_ = DjiFlightController_DeInit();
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-    USER_LOG_ERROR("Deinit flight controller module failed, error code:0x%08llX",
-                   djiStat_);
+    USER_LOG_ERROR("Deinit flight controller module failed, error code:0x%08llX", djiStat_);
   }
 
   djiDestroySubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY);
@@ -128,6 +130,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("gps_details", DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS);
   djiDestroySubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
   djiDestroySubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE);
+  djiDestroySubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
   INFO_MSG("[DJI]: Destoried all subscription topics");
 
   djiStat_ = DjiFcSubscription_DeInit();
@@ -150,8 +153,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get acc body data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
-   acc_body_data_ = Eigen::Vector3d(dji_acc_body_data_.x, dji_acc_body_data_.y, dji_acc_body_data_.z);
+  else{
+    acc_body_data_ = Eigen::Vector3d(dji_acc_body_data_.x, dji_acc_body_data_.y, dji_acc_body_data_.z);
+  }
 
   // angular rate fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED,
@@ -163,8 +167,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get angular rate fused data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
+  else{
     angular_rate_fused_data_ = Eigen::Vector3d(dji_angular_rate_fused_data_.x, dji_angular_rate_fused_data_.y, dji_angular_rate_fused_data_.z);
+  }
 
   // Vel
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY,
@@ -176,8 +181,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get velocity data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
+  else{
     velocity_data_ = Eigen::Vector3d(dji_velocity_data_.data.x, dji_velocity_data_.data.y, dji_velocity_data_.data.z);
+  }
 
   // Quaternion
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
@@ -207,8 +213,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get gps position data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
+  else{
     gps_position_data_ = Eigen::Vector3d(dji_gps_position_data_.x, dji_gps_position_data_.y, dji_gps_position_data_.z);
+  }
 
   // GPS details
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS,
@@ -244,8 +251,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get altitude fused data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else
+  else{
     altitude_fused_data_ = dji_altitude_fused_data_;
+  }
 
   // flight status
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT,
@@ -265,6 +273,15 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get flight mode data error, timestamp: "
                   << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
+                                                    (uint8_t *) &dji_ctrl_device_data_,
+                                                    sizeof(T_DjiFcSubscriptionControlDevice),
+                                                    &dji_timestamp_data_);
+  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+      INFO_MSG_RED("[DJI]: get control device data error, timestamp: "
+                           << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 
   // ----------------------- ROS publish -----------------------------//
@@ -451,7 +468,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
       // rid_info.altitude  = 10;
       rid_info.latitude  = dji_position_fused_data_.latitude;
       rid_info.longitude = dji_position_fused_data_.longitude;
-      rid_info.altitude  = dji_position_fused_data_.altitude;
+      rid_info.altitude  = static_cast<uint16_t> (dji_position_fused_data_.altitude);
       djiStat_ = DjiFlightController_Init(rid_info);
       if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         INFO_MSG_RED("[DJI]: init flight controller error, quit program");
@@ -498,7 +515,7 @@ void PayloadSdkInterface::readParam(std::string param_name, T &param_val, T defa
     INFO_MSG_GREEN("[DJI] | param: " << param_name << " found: " << param_val);
 }
 
-bool PayloadSdkInterface::switchCtrlDevice(ctrlDevice device){
+bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
   if (device == CTRL_DEVICE_OFFBOARD){
     INFO_MSG_YELLOW("[DJI]: Warning, switch to offboard mode ... ");
     INFO_MSG_YELLOW("[DJI]: Try to get offboard control authority ... ");

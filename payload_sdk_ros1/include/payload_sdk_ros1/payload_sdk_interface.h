@@ -44,17 +44,18 @@
 
 class PayloadSdkInterface{
 public:
-  enum ctrlDevice{
-    CTRL_DEVICE_RC = 0,
+  enum CtrlDevice{
+    CTRL_DEVICE_RC       = 0,
     CTRL_DEVICE_OFFBOARD = 1
   };
   enum ctrlMode{
-    NOT_SET = 0,
+    NOT_SET           = 0,
     OFFBOARD_VEL_BODY = 1,
-    OFFBOARD_VEL_NED = 2,
-    OFFBOARD_POS_NED = 3
+    OFFBOARD_VEL_NED  = 2,
+    OFFBOARD_POS_NED  = 3
   };
   typedef std::shared_ptr<PayloadSdkInterface> Ptr;
+  typedef std::unique_ptr<PayloadSdkInterface> UNI_Ptr;
   PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *osal_handler);
   ~PayloadSdkInterface();
 
@@ -78,6 +79,7 @@ private:
   T_DjiFcSubscriptionDisplaymode       dji_flight_mode_data_{0};
   T_DjiFcSubscriptionAngularRateFusioned dji_angular_rate_fused_data_{0};
   T_DjiFcSubscriptionGpsDetails        dji_gps_details_data_{0};
+  T_DjiFcSubscriptionControlDevice     dji_ctrl_device_data_{0};
 
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
@@ -101,7 +103,7 @@ private:
   // flags
   bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_, position_fused_ready_flag_;
   bool                          is_gps_convergent_, dji_ctrl_first_init_;
-  ctrlDevice                    cur_ctrl_device_;
+  CtrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
   ros::Time                     last_mavros_cmd_time_, last_pos_fused_recv_time_;
@@ -128,7 +130,7 @@ private:
                               E_DjiDataSubscriptionTopicFreq frequency,
                               DjiReceiveDataOfTopicCallback callback);
   void djiDestroySubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic);
-  bool switchCtrlDevice(ctrlDevice device);
+  bool switchCtrlDevice(CtrlDevice device);
   template<typename T>
   void readParam(std::string param_name, T &param_val, T default_val);
 
