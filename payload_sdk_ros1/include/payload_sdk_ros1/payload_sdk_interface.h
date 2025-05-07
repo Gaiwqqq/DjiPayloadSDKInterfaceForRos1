@@ -36,6 +36,10 @@
 #include <nav_msgs/Odometry.h>
 #include <payload_sdk_ros1/imu_60.h>
 
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <visualization_msgs/Marker.h>
+
 #define INFO_MSG(str)        do {std::cout << str << std::endl; } while(false)
 #define INFO_MSG_RED(str)    do {std::cout << "\033[31m" << str << "\033[0m" << std::endl; } while(false)
 #define INFO_MSG_GREEN(str)  do {std::cout << "\033[32m" << str << "\033[0m" << std::endl; } while(false)
@@ -63,7 +67,9 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
-  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_, vis_pub_;
+
+  tf2_ros::TransformBroadcaster tf_broadcaster_;
 
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
@@ -95,13 +101,16 @@ private:
   Eigen::Vector3d              acc_body_data_, acc_ground_data_, acc_raw_data_; // (ax, ay, az)
   Eigen::Vector3d              angular_rate_fused_data_; // (wx, wy, wz)
   Eigen::Vector3d              quaternion_data_;         // (pitch, roll, yaw)
-  Eigen::Vector3d              velocity_data_;           // (vx, vy, vz)
+  Eigen::Vector3d              velocity_data_neu_, velocity_data_neu_vis_; // (vx, vy, vz)
+  Eigen::Vector3d              velocity_data_frd_, velocity_data_frd_vis_; // (vx, vy, vz)
+  Eigen::Vector3d              velocity_data_flu_;       // (vx, vy, vz)
   Eigen::Vector3d              gps_position_data_;       // (latitude, longitude, altitude)
   Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
   double                       altitude_fused_data_;     //
+  Eigen::Quaterniond           quaternion_world_;        // (qx, qy, qz, qw)
 
   Eigen::Vector3d              neu_pos_init_;            // (latitude, longitude, altitude)
-  Eigen::Vector3d              xyz_pos_;                 // (x, y, z)
+  Eigen::Vector3d              xyz_pos_neu_;             // (x, y, z)
   double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
 
   // counters
@@ -128,6 +137,8 @@ private:
 
   void feedPositionDataProcess();
   void feedGPSDetailsDataProcess();
+  void feedVelDataProcess();
+  void feedQuaternionDataProcess();
 
   void publishImu60Data();
   void publishOdomData();
@@ -142,9 +153,12 @@ private:
   template<typename T>
   void readParam(std::string param_name, T &param_val, T default_val);
 
+  // visualization
+  void drawVel();
+  void drawRangeCircles();
+
   Eigen::Vector3d xyz2NEU(const Eigen::Vector3d& pos);
-  Eigen::Vector3d NEU2XYZ(const Eigen::Vector3d& enu);
-  Eigen::Vector3d NEU2XYZ_New(const Eigen::Vector3d& enu);
+  Eigen::Vector3d LLA2XYZ(const Eigen::Vector3d& lla);
 };
 
 #endif //PAYLOAD_SDK_INTERFACE_H

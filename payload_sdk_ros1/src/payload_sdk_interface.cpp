@@ -111,6 +111,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
   odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
   imu_trans_pub_       = nh_.advertise<sensor_msgs::Imu>("/dji/imu_trans", 2);
+  vis_pub_             = nh_.advertise<visualization_msgs::Marker>("/dji/vis", 2);
 
   if (dji_init_success){
     dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / _data_loop_rate), &PayloadSdkInterface::djiDataReadCallback, this);
@@ -160,8 +161,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
 
   djiStat_ = DjiFcSubscription_DeInit();
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-    USER_LOG_ERROR("Deinit data subscription module failed, error code:0x%08llX",
-                   djiStat_);
+    USER_LOG_ERROR("Deinit data subscription module failed, error code:0x%08llX", djiStat_);
   }
   INFO_MSG("[DJI]: Destoried data subscription module");
   INFO_MSG("[DJI]: Payload SDK interface deconstruct success... Goodbye!");
@@ -243,9 +243,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get velocity data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else{
-    velocity_data_ = Eigen::Vector3d(dji_velocity_data_.data.x, dji_velocity_data_.data.y, dji_velocity_data_.data.z);
-  }
+  else feedVelDataProcess();
 
   // Quaternion
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
@@ -256,15 +254,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get quaternion data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else{
-    T_DjiFcSubscriptionQuaternion quaternion = dji_quaternion_data_;
-    double pitch = (dji_f64_t) asinf(-2 * quaternion.q1 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q2) * 57.3;
-    double roll = (dji_f64_t) atan2f(2 * quaternion.q2 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q1,
-                                     -2 * quaternion.q1 * quaternion.q1 - 2 * quaternion.q2 * quaternion.q2 + 1) * 57.3;
-    double yaw = (dji_f64_t) atan2f(2 * quaternion.q1 * quaternion.q2 + 2 * quaternion.q0 * quaternion.q3,
-                                    -2 * quaternion.q2 * quaternion.q2 - 2 * quaternion.q3 * quaternion.q3 + 1) * 57.3;
-    quaternion_data_ = Eigen::Vector3d(pitch, roll, yaw);
-  }
+  else feedQuaternionDataProcess();
 
   // GPS position
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION,
@@ -373,6 +363,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   publishImu60Data();
   publishOdomData();
   publishImuMavrosData();
+  drawVel();
+  drawRangeCircles();
 }
 
 // 机体坐标系 FRD (前右下)
@@ -424,11 +416,11 @@ void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr&
     if (mode.data == 1){
       cur_ctrl_mode_ = OFFBOARD_VEL_BODY;
       T_DjiFlightControllerJoystickMode joystick_mode = {
-        DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
-        DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE
+              DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+              DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+              DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+              DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+              DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE
       };
       DjiFlightController_SetJoystickMode(joystick_mode);
       dji_flyctrl_pub_timer_.start();
@@ -454,9 +446,9 @@ void PayloadSdkInterface::publishImu60Data(){
   imu60_msg.lat       = static_cast<float>(position_fused_data_.x());
   imu60_msg.lon       = static_cast<float>(position_fused_data_.y());
   imu60_msg.alt       = static_cast<float>(position_fused_data_.z());
-  imu60_msg.Vx        = static_cast<float>(velocity_data_.x());
-  imu60_msg.Vy        = static_cast<float>(velocity_data_.y());
-  imu60_msg.Vz        = static_cast<float>(velocity_data_.z());
+  imu60_msg.Vx        = static_cast<float>(velocity_data_neu_.x());
+  imu60_msg.Vy        = static_cast<float>(velocity_data_neu_.y());
+  imu60_msg.Vz        = static_cast<float>(velocity_data_neu_.z());
 
   // todo: 角度转换存疑，不确定 ！！！！
   imu60_msg.Pitch     = static_cast<float>(quaternion_data_.x());
@@ -478,36 +470,40 @@ void PayloadSdkInterface::publishImu60Data(){
 
 void PayloadSdkInterface::publishOdomData(){
   if (!gps_ready_) return ;
-  nav_msgs::Odometry odom;
-  odom.header.stamp            = ros::Time::now();
-  odom.header.frame_id         = "world";
-  odom.pose.pose.position.x    = xyz_pos_.x();
-  odom.pose.pose.position.y    = xyz_pos_.y();
-  odom.pose.pose.position.z    = xyz_pos_.z();
+//  nav_msgs::Odometry odom;
+//  odom.header.stamp            = ros::Time::now();
+//  odom.header.frame_id         = "world";
+//  odom.pose.pose.position.x    = xyz_pos_neu_.x();
+//  odom.pose.pose.position.y    = xyz_pos_neu_.y();
+//  odom.pose.pose.position.z    = xyz_pos_neu_.z();
+//
+//  odom.pose.pose.orientation.x = quaternion_world_.x();
+//  odom.pose.pose.orientation.y = quaternion_world_.y();
+//  odom.pose.pose.orientation.z = quaternion_world_.z();
+//  odom.pose.pose.orientation.w = quaternion_world_.w();
+//
+//  odom.twist.twist.linear.x    = velocity_data_frd_.x();
+//  odom.twist.twist.linear.y    = velocity_data_frd_.y();
+//  odom.twist.twist.linear.z    = velocity_data_frd_.z();
+//  odom.twist.twist.angular.x   = angular_rate_fused_data_.x();
+//  odom.twist.twist.angular.y   = angular_rate_fused_data_.y();
+//  odom.twist.twist.angular.z   = angular_rate_fused_data_.z();
+//
+//  odom_trans_pub_.publish(odom);
 
-  Eigen::Quaterniond dji_quat(
-          dji_quaternion_data_.q0,
-          dji_quaternion_data_.q1,
-          dji_quaternion_data_.q2,
-          dji_quaternion_data_.q3
-  );
-  Eigen::Quaterniond quat_ned =
-          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
-          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ())
-          * dji_quat;
-  odom.pose.pose.orientation.x = quat_ned.x();
-  odom.pose.pose.orientation.y = quat_ned.y();
-  odom.pose.pose.orientation.z = quat_ned.z();
-  odom.pose.pose.orientation.w = quat_ned.w();
+  geometry_msgs::TransformStamped tf_msg;
+  tf_msg.header.stamp = ros::Time::now();
+  tf_msg.header.frame_id = "world";
+  tf_msg.child_frame_id  = "dji_body";
+  tf_msg.transform.rotation.x = quaternion_world_.x();
+  tf_msg.transform.rotation.y = quaternion_world_.y();
+  tf_msg.transform.rotation.z = quaternion_world_.z();
+  tf_msg.transform.rotation.w = quaternion_world_.w();
 
-  odom.twist.twist.linear.x    = velocity_data_.x();
-  odom.twist.twist.linear.y    = velocity_data_.y();
-  odom.twist.twist.linear.z    = velocity_data_.z();
-  odom.twist.twist.angular.x   = angular_rate_fused_data_.x();
-  odom.twist.twist.angular.y   = angular_rate_fused_data_.y();
-  odom.twist.twist.angular.z   = angular_rate_fused_data_.z();
-
-  odom_trans_pub_.publish(odom);
+  tf_msg.transform.translation.x = xyz_pos_neu_.x();
+  tf_msg.transform.translation.y = xyz_pos_neu_.y();
+  tf_msg.transform.translation.z = xyz_pos_neu_.z();
+  tf_broadcaster_.sendTransform(tf_msg);
 }
 
 void PayloadSdkInterface::publishImuMavrosData(){
@@ -545,12 +541,12 @@ void PayloadSdkInterface::publishImuMavrosData(){
 
 void PayloadSdkInterface::feedPositionDataProcess(){
   position_fused_data_ =
-          Eigen::Vector3d(dji_position_fused_data_.latitude / M_PI * 180.0,
-                          dji_position_fused_data_.longitude / M_PI * 180.0,
+          Eigen::Vector3d(dji_position_fused_data_.latitude  / M_PI * 180.0,   // 纬
+                          dji_position_fused_data_.longitude / M_PI * 180.0,   // 经
                           dji_position_fused_data_.altitude);
   if (gps_ready_){
-    xyz_pos_ = NEU2XYZ_New(position_fused_data_);
-    std::cout << "xyz_pos_: " << xyz_pos_.transpose() << std::endl;
+    xyz_pos_neu_ = LLA2XYZ(position_fused_data_);
+//    std::cout << "xyz_pos_neu_: " << xyz_pos_neu_.transpose() << std::endl;
     // std::cout << "positon fused data: " << position_fused_data_.transpose() << std::endl;
   }
 
@@ -591,6 +587,32 @@ void PayloadSdkInterface::feedGPSDetailsDataProcess(){
     INFO_MSG_GREEN("[DJI]: POSE FUSED DATA INIT -> " << position_fused_data_.transpose());
     INFO_MSG_GREEN("[DJI]: GPS INIT position: " << position_fused_data_.transpose());
   }
+}
+
+void PayloadSdkInterface::feedVelDataProcess() {
+  // 已知无人机姿态，将速度从北东天坐标系转换为机体FLU坐标系
+  velocity_data_neu_     = Eigen::Vector3d (dji_velocity_data_.data.x, dji_velocity_data_.data.y, dji_velocity_data_.data.z);
+  velocity_data_neu_vis_ = Eigen::Vector3d (dji_velocity_data_.data.x, -dji_velocity_data_.data.y, dji_velocity_data_.data.z);
+  velocity_data_frd_     = quaternion_world_ * velocity_data_neu_;
+  velocity_data_frd_vis_ = quaternion_world_ * velocity_data_neu_vis_;
+}
+
+void PayloadSdkInterface::feedQuaternionDataProcess() {
+  T_DjiFcSubscriptionQuaternion quaternion = dji_quaternion_data_;
+  double pitch = (dji_f64_t) asinf(-2 * quaternion.q1 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q2) * 57.3;
+  double roll = (dji_f64_t) atan2f(2 * quaternion.q2 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q1,
+                                   -2 * quaternion.q1 * quaternion.q1 - 2 * quaternion.q2 * quaternion.q2 + 1) * 57.3;
+  double yaw = (dji_f64_t) atan2f(2 * quaternion.q1 * quaternion.q2 + 2 * quaternion.q0 * quaternion.q3,
+                                  -2 * quaternion.q2 * quaternion.q2 - 2 * quaternion.q3 * quaternion.q3 + 1) * 57.3;
+  quaternion_data_ = Eigen::Vector3d(pitch, roll, yaw);
+//  std::cout << "(pitch, roll, yaw): " << quaternion_data_.transpose() << std::endl;
+  Eigen::Quaterniond dji_quat(
+          dji_quaternion_data_.q0,
+          dji_quaternion_data_.q1,
+          dji_quaternion_data_.q2,
+          dji_quaternion_data_.q3
+  );
+  quaternion_world_ = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) * dji_quat;
 }
 
 bool PayloadSdkInterface::djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
@@ -683,6 +705,79 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
   return true;
 }
 
+// 原始速度是东北地坐标系下的速度 NED
+void PayloadSdkInterface::drawVel() {
+  // 绘制箭头，长度为速度大小，方向为速度方向
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "dji_body";
+  marker.header.stamp    = ros::Time::now();
+  marker.ns     = "velocity";
+  marker.id     = 0;
+  marker.type   = visualization_msgs::Marker::ARROW;
+  marker.action = visualization_msgs::Marker::ADD;
+
+  marker.points.resize(2);
+  marker.points[0].x = 0.0;
+  marker.points[0].y = 0.0;
+  marker.points[0].z = 0.0;
+  marker.points[1].x = velocity_data_frd_vis_.x() * 5;
+  marker.points[1].y = velocity_data_frd_vis_.y() * 5;
+  marker.points[1].z = velocity_data_frd_vis_.z() * 5;
+
+  marker.pose.orientation.w = 1.0;
+  marker.pose.orientation.x = 0.0;
+  marker.pose.orientation.y = 0.0;
+  marker.pose.orientation.z = 0.0;
+  marker.scale.x = 0.1;
+  marker.scale.y = 0.1;
+  marker.scale.z = 0.1;
+  marker.color.r = 1.0;
+  marker.color.g = 0.0;
+  marker.color.b = 0.0;
+  marker.color.a = 1.0;
+  vis_pub_.publish(marker);
+}
+
+void PayloadSdkInterface::drawRangeCircles() {
+  std::vector<double> distances = {10.0, 30.0, 50.0}; // 定义要可视化的距离范围
+  std::vector<std_msgs::ColorRGBA> colors;
+  // 定义不同圆对应的颜色
+  std_msgs::ColorRGBA color1, color2, color3;
+  color1.r = 1.0; color1.g = 0.0; color1.b = 0.0; color1.a = 0.3; // 红色
+  color2.r = 0.0; color2.g = 1.0; color2.b = 0.0; color2.a = 0.3; // 绿色
+  color3.r = 0.0; color3.g = 0.0; color3.b = 1.0; color3.a = 0.3; // 蓝色
+  colors = {color1, color2, color3};
+
+  for (size_t i = 0; i < distances.size(); ++i) {
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "world"; // 设置参考坐标系
+    marker.header.stamp    = ros::Time::now();
+    marker.ns              = "range_circles";
+    marker.id              = static_cast<int>(i);
+    marker.type            = visualization_msgs::Marker::CYLINDER; // 使用圆柱来近似圆
+    marker.action          = visualization_msgs::Marker::ADD;
+
+    // 设置位置，假设圆中心在原点，可按需修改
+    marker.pose.position.x = 0.0;
+    marker.pose.position.y = 0.0;
+    marker.pose.position.z = 0.0 - static_cast<double>(i) * 0.1;
+    marker.pose.orientation.x = 0.0;
+    marker.pose.orientation.y = 0.0;
+    marker.pose.orientation.z = 0.0;
+    marker.pose.orientation.w = 1.0;
+
+    // 设置尺寸，高度设小以模拟圆
+    marker.scale.x = distances[i] * 2;
+    marker.scale.y = distances[i] * 2;
+    marker.scale.z = 0.01;
+
+    // 设置颜色
+    marker.color = colors[i];
+
+    vis_pub_.publish(marker);
+  }
+}
+
 /**
  * @brief 将笛卡尔坐标系下的 XYZ 坐标转换为东北天 (NEU) 坐标系下的经纬度和海拔。
  *
@@ -703,41 +798,20 @@ Eigen::Vector3d PayloadSdkInterface::xyz2NEU(const Eigen::Vector3d& pos){
   return Eigen::Vector3d(lati, longi, alt);
 }
 
-/**
- * @brief 将东北天 (NEU) 坐标系下的经纬度和海拔转换为笛卡尔坐标系下的 XYZ 坐标。
- *
- * 该函数根据输入的东北天 (NEU) 坐标系下的向量，结合初始的 NEU 位置，
- * 利用地球椭球参数进行坐标转换，得到对应的笛卡尔坐标系下的 XYZ 坐标。
- *
- * @param enu 东北天 (NEU) 坐标系下的向量，包含纬度、经度和海拔。
- * @return Eigen::Vector3d 笛卡尔坐标系下的 XYZ 坐标向量。
- */
-Eigen::Vector3d PayloadSdkInterface::NEU2XYZ(const Eigen::Vector3d& enu){
+Eigen::Vector3d PayloadSdkInterface::LLA2XYZ(const Eigen::Vector3d &lla) {
   double Ax = 6383487.606;
   double Bx = 5357.31;
   double Ay = 6367449.134;
   double By = 32077.0;
-  double dPI = 57.295779512;
+  double dPI = 57.295779512; // 角度转弧度的系数（180/π）
+  double lat_a = (neu_pos_init_.x() + lla.x()) / 2.0; // 平均纬度
 
-  double cos_lat = cos(neu_pos_init_.x() / dPI);
-  double sin_lat = sin(neu_pos_init_.x() / dPI);
+  // 计算 X 坐标，X 轴指北
+  double y = -((Ax * cos(lat_a / dPI) - Bx * pow(cos(lat_a / dPI), 3)) * (lla.y() - neu_pos_init_.y())) / dPI;
+  // 计算 Y 坐标，Y 轴指东
+  double x = ((Ay - By * pow(cos(lat_a / dPI), 2)) * (lla.x() - neu_pos_init_.x())) / dPI;
+  // 计算 Z 坐标，Z 轴指天
+  double z = lla.z() - neu_pos_init_.z();
 
-  double x = ((enu.y() - neu_pos_init_.y()) * (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat)) / dPI;
-  double y = ((enu.x() - neu_pos_init_.x()) * (Ay - By * cos_lat * cos_lat)) / dPI;
-  double z = enu.z() - neu_pos_init_.z();
-
-  return Eigen::Vector3d(x, y, z);
-}
-
-Eigen::Vector3d PayloadSdkInterface::NEU2XYZ_New(const Eigen::Vector3d &enu) {
-  double Ax = 6383487.606;
-  double Bx = 5357.31;
-  double Ay = 6367449.134;
-  double By = 32077.0;
-  double dPI = 57.295779512;
-  double lat_a = (neu_pos_init_.x() + enu.x()) / 2.0;
-  double x = static_cast<double> ((Ax * cos(lat_a / dPI) - Bx * (cos(lat_a / dPI) * cos(lat_a / dPI) * cos(lat_a / dPI))) * (enu.y() - neu_pos_init_.y()) / dPI);
-  double y = static_cast<double> ((Ay - By * (cos(lat_a / dPI) * cos(lat_a / dPI))) * (enu.x() - neu_pos_init_.x()) / dPI); //y_abs是北向
-  double z = static_cast<double> (enu.z() - neu_pos_init_.z());
   return Eigen::Vector3d(x, y, z);
 }

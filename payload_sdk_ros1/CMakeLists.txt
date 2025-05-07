@@ -74,6 +74,7 @@ find_package(catkin REQUIRED COMPONENTS
     nav_msgs
     sensor_msgs
     message_generation
+    tf2_ros
 )
 
 add_message_files(
