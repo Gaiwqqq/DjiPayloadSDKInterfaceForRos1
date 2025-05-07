@@ -88,6 +88,14 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
   dji_init_success =
           djiCreateSubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, freq_map[1], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rtk_state", DJI_FC_SUBSCRIPTION_TOPIC_RTK_CONNECT_STATUS, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rtk_pos", DJI_FC_SUBSCRIPTION_TOPIC_RTK_POSITION, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rtk_vel", DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW, freq_map[5], nullptr);
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_mavros_sub;
@@ -144,6 +152,10 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
   djiDestroySubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE);
   djiDestroySubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
+  djiDestroySubscription("rtk_state", DJI_FC_SUBSCRIPTION_TOPIC_RTK_CONNECT_STATUS);
+  djiDestroySubscription("rtk_pos", DJI_FC_SUBSCRIPTION_TOPIC_RTK_POSITION);
+  djiDestroySubscription("rtk_vel", DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY);
+  djiDestroySubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW);
   INFO_MSG("[DJI]: Destoried all subscription topics");
 
   djiStat_ = DjiFcSubscription_DeInit();
@@ -318,6 +330,42 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
                                                      &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
     INFO_MSG_RED("[DJI]: get control device data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RTK_CONNECT_STATUS,
+                                                     (uint8_t *) &dji_rtk_connection_stat_data_,
+                                                     sizeof(T_DjiFcSubscriptionRTKConnectStatus),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rtk state data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RTK_POSITION,
+                                                     (uint8_t *) &dji_rtk_pos_data_,
+                                                     sizeof(T_DjiFcSubscriptionRtkPosition),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rtk pos data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY,
+                                                     (uint8_t *) &dji_rtk_vel_data_,
+                                                     sizeof(T_DjiFcSubscriptionRtkVelocity),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rtk vel data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW,
+                                                     (uint8_t *) &dji_rtk_yaw_data_,
+                                                     sizeof(T_DjiFcSubscriptionRtkYaw),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rtk yaw data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 

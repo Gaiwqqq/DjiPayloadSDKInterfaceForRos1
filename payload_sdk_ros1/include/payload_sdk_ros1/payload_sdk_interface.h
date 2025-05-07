@@ -83,6 +83,11 @@ private:
   T_DjiFcSubscriptionGpsDetails        dji_gps_details_data_{0};
   T_DjiFcSubscriptionControlDevice     dji_ctrl_device_data_{0};
 
+  T_DjiFcSubscriptionRTKConnectStatus  dji_rtk_connection_stat_data_{0};
+  T_DjiFcSubscriptionRtkPosition       dji_rtk_pos_data_{0};
+  T_DjiFcSubscriptionRtkVelocity       dji_rtk_vel_data_{0};
+  T_DjiFcSubscriptionRtkYaw            dji_rtk_yaw_data_{0};
+
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
 
