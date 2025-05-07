@@ -68,6 +68,8 @@ private:
   T_DjiReturnCode                      djiStat_;
   T_DjiOsalHandler                     *dji_osal_handler_;
   T_DjiFcSubscriptionAccelerationBody  dji_acc_body_data_{0};
+  T_DjiFcSubscriptionAccelerationRaw   dji_acc_raw_data_{0};
+  T_DjiFcSubscriptionAccelerationGround dji_acc_ground_data_{0};
   T_DjiFcSubscriptionQuaternion        dji_quaternion_data_{0};
   T_DjiFcSubscriptionVelocity          dji_velocity_data_{0};
   T_DjiFcSubscriptionAltitudeFused     dji_altitude_fused_data_{0};
@@ -85,7 +87,7 @@ private:
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
 
   // data transmission
-  Eigen::Vector3d              acc_body_data_;           // (ax, ay, az)
+  Eigen::Vector3d              acc_body_data_, acc_ground_data_, acc_raw_data_; // (ax, ay, az)
   Eigen::Vector3d              angular_rate_fused_data_; // (wx, wy, wz)
   Eigen::Vector3d              quaternion_data_;         // (pitch, roll, yaw)
   Eigen::Vector3d              velocity_data_;           // (vx, vy, vz)
@@ -111,6 +113,7 @@ private:
 
   // throttles
   double                        _gps_accuracy_thres;
+  double                        _data_loop_rate;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
@@ -136,6 +139,7 @@ private:
 
   Eigen::Vector3d xyz2NEU(const Eigen::Vector3d& pos);
   Eigen::Vector3d NEU2XYZ(const Eigen::Vector3d& enu);
+  Eigen::Vector3d NEU2XYZ_New(const Eigen::Vector3d& enu);
 };
 
 #endif //PAYLOAD_SDK_INTERFACE_H

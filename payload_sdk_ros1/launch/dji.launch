@@ -3,5 +3,6 @@
         <param name="dji/topic_nav_pub" value="/guandao1" type="string"/>
         <param name="dji/topic_mavros_sub" value="/mavros/setpoint_raw/local" type="string"/>
         <param name="dji/gps_accuracy_threshold" value="2.0" type="double"/>
+        <param name="dji/data_loop_rate" value="10.0" type="double"/>
     </node>
 </launch>

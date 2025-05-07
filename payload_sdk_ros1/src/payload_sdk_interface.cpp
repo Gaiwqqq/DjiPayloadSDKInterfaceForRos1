@@ -1,4 +1,6 @@
 #include "../include/payload_sdk_ros1/payload_sdk_interface.h"
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 
 
@@ -10,6 +12,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_osal_handler_ = osal_handler;
 
   dji_acc_body_data_            = {0};
+  dji_acc_ground_data_          = {0};
+  dji_acc_raw_data_             = {0};
   dji_quaternion_data_          = {0};
   dji_velocity_data_            = {0};
   dji_gps_position_data_        = {0};
@@ -36,9 +40,9 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   last_pos_fused_recv_time_ = last_mavros_cmd_time_;
 
   mavros_cmd_type_mask_velctrl_only_ =
-    mavros_msgs::PositionTarget::IGNORE_PX  | mavros_msgs::PositionTarget::IGNORE_PY  | mavros_msgs::PositionTarget::IGNORE_PZ  |
-    mavros_msgs::PositionTarget::IGNORE_AFX | mavros_msgs::PositionTarget::IGNORE_AFY | mavros_msgs::PositionTarget::IGNORE_AFZ |
-    mavros_msgs::PositionTarget::IGNORE_YAW;
+          mavros_msgs::PositionTarget::IGNORE_PX  | mavros_msgs::PositionTarget::IGNORE_PY  | mavros_msgs::PositionTarget::IGNORE_PZ  |
+          mavros_msgs::PositionTarget::IGNORE_AFX | mavros_msgs::PositionTarget::IGNORE_AFY | mavros_msgs::PositionTarget::IGNORE_AFZ |
+          mavros_msgs::PositionTarget::IGNORE_YAW;
 
   INFO_MSG("[DJI]: Payload SDK init success, do topic init...");
 
@@ -49,6 +53,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   }
 
   std::map<int, E_DjiDataSubscriptionTopicFreq> freq_map;
+  freq_map[400] = DJI_DATA_SUBSCRIPTION_TOPIC_400_HZ;
   freq_map[200] = DJI_DATA_SUBSCRIPTION_TOPIC_200_HZ;
   freq_map[100] = DJI_DATA_SUBSCRIPTION_TOPIC_100_HZ;
   freq_map[50]  = DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ;
@@ -56,53 +61,59 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   freq_map[5]   = DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ;
   freq_map[1]   = DJI_DATA_SUBSCRIPTION_TOPIC_1_HZ;
 
-  bool dji_init_success = true;
+  bool dji_init_success;
   dji_init_success =
-    djiCreateSubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY, freq_map[100], nullptr);
+          djiCreateSubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY, freq_map[10], nullptr);
   dji_init_success =
-    djiCreateSubscription("angular_rate_fused", DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED, freq_map[100], nullptr);
+          djiCreateSubscription("acc_ground", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_GROUND, freq_map[10], nullptr);
   dji_init_success =
-    djiCreateSubscription("quaternion", DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION, freq_map[100], nullptr);
+          djiCreateSubscription("acc_raw", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_RAW, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("pos_fusion", DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED, freq_map[100], nullptr);
+          djiCreateSubscription("angular_rate_fused", DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("altitude_fused", DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED, freq_map[100], nullptr);
+          djiCreateSubscription("quaternion", DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY, freq_map[50], nullptr);
+          djiCreateSubscription("pos_fusion", DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, freq_map[5], nullptr);
+          djiCreateSubscription("altitude_fused", DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("gps_details", DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS, freq_map[5], nullptr);
+          djiCreateSubscription("velocity", DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY, freq_map[50], nullptr);
   dji_init_success =
-    djiCreateSubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, freq_map[5], nullptr);
+          djiCreateSubscription("gps_position", DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, freq_map[5], nullptr);
   dji_init_success =
-    djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
+          djiCreateSubscription("gps_details", DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS, freq_map[5], nullptr);
   dji_init_success =
-    djiCreateSubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, freq_map[1], nullptr);
+          djiCreateSubscription("flight_status", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, freq_map[1], nullptr);
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_mavros_sub;
   readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
   readParam<std::string>("dji/topic_mavros_sub", topic_mavros_sub, "/mavros/setpoint_raw/local");
   readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
+  readParam<double>("dji/data_loop_rate", _data_loop_rate, 10.0);
 
   mavros_cmd_sub_      = nh_.subscribe(topic_mavros_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
-                                        this , ros::TransportHints().tcpNoDelay());
+                                       this , ros::TransportHints().tcpNoDelay());
   offboard_switch_sub_ = nh_.subscribe("/dji/offboard_switch", 2, &PayloadSdkInterface::offboardSwitchCallback,
-                                        this, ros::TransportHints().tcpNoDelay());
+                                       this, ros::TransportHints().tcpNoDelay());
   imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
   odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
+  imu_trans_pub_       = nh_.advertise<sensor_msgs::Imu>("/dji/imu_trans", 2);
 
   if (dji_init_success){
-    dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiDataReadCallback, this);
+    dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / _data_loop_rate), &PayloadSdkInterface::djiDataReadCallback, this);
     dji_flyctrl_pub_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiFlyCtrlPubCallback, this);
     dji_flyctrl_pub_timer_.stop();
-    INFO_MSG_GREEN("[DJI]: Payload SDK init success, do topic init success !");
-    INFO_MSG_GREEN("[DJI]: Subscribe to topics: quaternion, velocity, gps_position, pos_fusion");
-    INFO_MSG_GREEN("[DJI]: data publish max frequency : " << 50 << " Hz");
+    INFO_MSG_GREEN("[DJI] | Payload SDK init success, do topic init success !");
+    INFO_MSG_GREEN("[DJI] | Subscribe to topics: quaternion, velocity, gps_position, pos_fusion");
+    INFO_MSG_GREEN("[DJI] | data publish max frequency : " << 50 << " Hz");
   }else{
-    INFO_MSG_RED("[DJI]: Payload SDK init failed, do topic init failed !");
-    INFO_MSG_RED("[DJI]: Do NOT launch timer! Quit program");
+    INFO_MSG_RED("[DJI] | Payload SDK init failed, do topic init failed !");
+    INFO_MSG_RED("[DJI] | Do NOT launch timer! Quit program");
     return ;
   }
 }
@@ -121,6 +132,8 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   }
 
   djiDestroySubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY);
+  djiDestroySubscription("acc_ground", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_GROUND);
+  djiDestroySubscription("acc_raw", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_RAW);
   djiDestroySubscription("angular_rate_fused", DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED);
   djiDestroySubscription("quaternion", DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
   djiDestroySubscription("pos_fusion", DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED);
@@ -143,29 +156,66 @@ PayloadSdkInterface::~PayloadSdkInterface(){
 }
 
 void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
+  // Position fused
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED,
+                                                     (uint8_t *) &dji_position_fused_data_,
+                                                     sizeof(T_DjiFcSubscriptionPositionFused),
+                                                     &dji_timestamp_data_);
+  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
+    INFO_MSG_RED("[DJI]: get position fused data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+  else{
+    feedPositionDataProcess();
+  }
+
   // Acc body
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY,
-                                                (uint8_t *) &dji_acc_body_data_,
-                                                sizeof(T_DjiFcSubscriptionAccelerationBody),
-                                                &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_acc_body_data_,
+                                                     sizeof(T_DjiFcSubscriptionAccelerationBody),
+                                                     &dji_timestamp_data_);
 
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get acc body data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     acc_body_data_ = Eigen::Vector3d(dji_acc_body_data_.x, dji_acc_body_data_.y, dji_acc_body_data_.z);
   }
 
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_GROUND,
+                                                     (uint8_t *) &dji_acc_ground_data_,
+                                                     sizeof(T_DjiFcSubscriptionAccelerationGround),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
+    INFO_MSG_RED("[DJI]: get acc ground data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }else {
+    acc_ground_data_ = Eigen::Vector3d(dji_acc_ground_data_.x, dji_acc_ground_data_.y, dji_acc_ground_data_.z);
+//    std::cout << "acc_ground_data_: " << acc_ground_data_.transpose() << std::endl;
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_RAW,
+                                                     (uint8_t *) &dji_acc_raw_data_,
+                                                     sizeof(T_DjiFcSubscriptionAccelerationRaw),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
+    INFO_MSG_RED("[DJI]: get acc raw data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }else {
+    acc_raw_data_ = Eigen::Vector3d(dji_acc_raw_data_.x, dji_acc_raw_data_.y, dji_acc_raw_data_.z);
+    // std::cout << "acc_raw_data_: " << acc_raw_data_.transpose() << std::endl;
+  }
+
   // angular rate fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ANGULAR_RATE_FUSIONED,
-                                                (uint8_t *) &dji_angular_rate_fused_data_,
-                                                sizeof(T_DjiFcSubscriptionAngularRateFusioned),
-                                                &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_angular_rate_fused_data_,
+                                                     sizeof(T_DjiFcSubscriptionAngularRateFusioned),
+                                                     &dji_timestamp_data_);
 
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get angular rate fused data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     angular_rate_fused_data_ = Eigen::Vector3d(dji_angular_rate_fused_data_.x, dji_angular_rate_fused_data_.y, dji_angular_rate_fused_data_.z);
@@ -173,13 +223,13 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 
   // Vel
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_VELOCITY,
-                                                  (uint8_t *) &dji_velocity_data_,
-                                                  sizeof(T_DjiFcSubscriptionVelocity),
-                                                  &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_velocity_data_,
+                                                     sizeof(T_DjiFcSubscriptionVelocity),
+                                                     &dji_timestamp_data_);
 
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get velocity data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     velocity_data_ = Eigen::Vector3d(dji_velocity_data_.data.x, dji_velocity_data_.data.y, dji_velocity_data_.data.z);
@@ -187,31 +237,31 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 
   // Quaternion
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
-                                                  (uint8_t *) &dji_quaternion_data_,
-                                                  sizeof(T_DjiFcSubscriptionQuaternion),
-                                                  &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_quaternion_data_,
+                                                     sizeof(T_DjiFcSubscriptionQuaternion),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get quaternion data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     T_DjiFcSubscriptionQuaternion quaternion = dji_quaternion_data_;
     double pitch = (dji_f64_t) asinf(-2 * quaternion.q1 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q2) * 57.3;
     double roll = (dji_f64_t) atan2f(2 * quaternion.q2 * quaternion.q3 + 2 * quaternion.q0 * quaternion.q1,
-                             -2 * quaternion.q1 * quaternion.q1 - 2 * quaternion.q2 * quaternion.q2 + 1) * 57.3;
+                                     -2 * quaternion.q1 * quaternion.q1 - 2 * quaternion.q2 * quaternion.q2 + 1) * 57.3;
     double yaw = (dji_f64_t) atan2f(2 * quaternion.q1 * quaternion.q2 + 2 * quaternion.q0 * quaternion.q3,
-                             -2 * quaternion.q2 * quaternion.q2 - 2 * quaternion.q3 * quaternion.q3 + 1) * 57.3;
+                                    -2 * quaternion.q2 * quaternion.q2 - 2 * quaternion.q3 * quaternion.q3 + 1) * 57.3;
     quaternion_data_ = Eigen::Vector3d(pitch, roll, yaw);
   }
 
   // GPS position
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION,
-                                                  (uint8_t *) &dji_gps_position_data_,
-                                                  sizeof(T_DjiFcSubscriptionGpsPosition),
-                                                  &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_gps_position_data_,
+                                                     sizeof(T_DjiFcSubscriptionGpsPosition),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get gps position data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     gps_position_data_ = Eigen::Vector3d(dji_gps_position_data_.x, dji_gps_position_data_.y, dji_gps_position_data_.z);
@@ -219,37 +269,24 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 
   // GPS details
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS,
-                                                  (uint8_t *) &dji_gps_details_data_,
-                                                  sizeof(T_DjiFcSubscriptionGpsDetails),
-                                                  &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_gps_details_data_,
+                                                     sizeof(T_DjiFcSubscriptionGpsDetails),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get gps details data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }else{
     feedGPSDetailsDataProcess();
   }
 
-  // Position fused
-  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED,
-                                                 (uint8_t *) &dji_position_fused_data_,
-                                                 sizeof(T_DjiFcSubscriptionPositionFused),
-                                                 &dji_timestamp_data_);
-  if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
-    INFO_MSG_RED("[DJI]: get position fused data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
-  }
-  else{
-    feedPositionDataProcess();
-  }
-
   // altitude fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
-                                                 (uint8_t *) &dji_altitude_fused_data_,
-                                                 sizeof(T_DjiFcSubscriptionAltitudeFused),
-                                                 &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_altitude_fused_data_,
+                                                     sizeof(T_DjiFcSubscriptionAltitudeFused),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get altitude fused data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
   else{
     altitude_fused_data_ = dji_altitude_fused_data_;
@@ -257,31 +294,31 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 
   // flight status
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT,
-                                                 (uint8_t *) &dji_flight_status_data_,
-                                                 sizeof(T_DjiFcSubscriptionFlightStatus),
-                                                 &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_flight_status_data_,
+                                                     sizeof(T_DjiFcSubscriptionFlightStatus),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get flight status data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 
   // flight mode
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE,
-                                                 (uint8_t *) &dji_flight_mode_data_,
-                                                 sizeof(T_DjiFcSubscriptionDisplaymode),
-                                                 &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_flight_mode_data_,
+                                                     sizeof(T_DjiFcSubscriptionDisplaymode),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get flight mode data error, timestamp: "
-                  << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
-                                                    (uint8_t *) &dji_ctrl_device_data_,
-                                                    sizeof(T_DjiFcSubscriptionControlDevice),
-                                                    &dji_timestamp_data_);
+                                                     (uint8_t *) &dji_ctrl_device_data_,
+                                                     sizeof(T_DjiFcSubscriptionControlDevice),
+                                                     &dji_timestamp_data_);
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-      INFO_MSG_RED("[DJI]: get control device data error, timestamp: "
-                           << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+    INFO_MSG_RED("[DJI]: get control device data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
 
   // ----------------------- ROS publish -----------------------------//
@@ -290,6 +327,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   publishImuMavrosData();
 }
 
+// 机体坐标系 FRD (前右下)
+// 大地坐标系 NED (北东地)
 void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
   if (!mavros_cmd_heartbeat_ready_) return;
   if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
@@ -302,10 +341,10 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
       return;
     }
     T_DjiFlightControllerJoystickCommand joystick_cmd =
-      {static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.x),
-       static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.y),
-       static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.z),
-       static_cast<dji_f32_t>(mavros_cmd_data_recv_.yaw_rate)};
+            {static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.x),
+             static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.y),
+             static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.z),
+             static_cast<dji_f32_t>(mavros_cmd_data_recv_.yaw_rate)};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
 }
@@ -315,7 +354,7 @@ void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::C
   double time_duration  = (cur_time - last_mavros_cmd_time_).toSec();
   last_mavros_cmd_time_ = cur_time;
   if (time_duration > 0.5 && mavros_cmd_heartbeat_ready_){
-    INFO_MSG_RED("[DJI]: Warning, mavros cmd data not received in 200ms, lost heartbeat !");
+    INFO_MSG_RED("[DJI]: Warning, mavros cmd data not received in 500ms, lost heartbeat !");
     mavros_cmd_heartbeat_ready_ = false;
   }
   else if (time_duration < 0.5 && !mavros_cmd_heartbeat_ready_){
@@ -378,9 +417,9 @@ void PayloadSdkInterface::publishImu60Data(){
   imu60_msg.RollRate  = static_cast<float>(angular_rate_fused_data_.x());
   imu60_msg.PitchRate = static_cast<float>(angular_rate_fused_data_.y());
   imu60_msg.YawRate   = static_cast<float>(angular_rate_fused_data_.z());
-  imu60_msg.Ax        = static_cast<float>(acc_body_data_.x());
-  imu60_msg.Ay        = static_cast<float>(acc_body_data_.y());
-  imu60_msg.Az        = static_cast<float>(acc_body_data_.z());
+  imu60_msg.Ax        = static_cast<float>(acc_raw_data_.x());
+  imu60_msg.Ay        = static_cast<float>(acc_raw_data_.y());
+  imu60_msg.Az        = static_cast<float>(acc_raw_data_.z());
 
   imu60_msg.SensorStatus = 25;
   imu60_msg.WorkStatus   = 8;
@@ -398,15 +437,20 @@ void PayloadSdkInterface::publishOdomData(){
   odom.pose.pose.position.y    = xyz_pos_.y();
   odom.pose.pose.position.z    = xyz_pos_.z();
 
-  Eigen::Quaterniond quat_pos_(
-    Eigen::AngleAxisd(quaternion_data_.z(), Eigen::Vector3d::UnitZ()) *
-    Eigen::AngleAxisd(quaternion_data_.x(), Eigen::Vector3d::UnitY()) *
-    Eigen::AngleAxisd(quaternion_data_.y(), Eigen::Vector3d::UnitX())
+  Eigen::Quaterniond dji_quat(
+          dji_quaternion_data_.q0,
+          dji_quaternion_data_.q1,
+          dji_quaternion_data_.q2,
+          dji_quaternion_data_.q3
   );
-  odom.pose.pose.orientation.x = quat_pos_.x();
-  odom.pose.pose.orientation.y = quat_pos_.y();
-  odom.pose.pose.orientation.z = quat_pos_.z();
-  odom.pose.pose.orientation.w = quat_pos_.w();
+  Eigen::Quaterniond quat_ned =
+          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ())
+          * dji_quat;
+  odom.pose.pose.orientation.x = quat_ned.x();
+  odom.pose.pose.orientation.y = quat_ned.y();
+  odom.pose.pose.orientation.z = quat_ned.z();
+  odom.pose.pose.orientation.w = quat_ned.w();
 
   odom.twist.twist.linear.x    = velocity_data_.x();
   odom.twist.twist.linear.y    = velocity_data_.y();
@@ -425,18 +469,25 @@ void PayloadSdkInterface::publishImuMavrosData(){
   imu_msg.header.stamp = ros::Time::now();
   imu_msg.header.frame_id = "world";
 
-  Eigen::Quaterniond quat_pos_(
-    Eigen::AngleAxisd(quaternion_data_.z(), Eigen::Vector3d::UnitZ()) *
-    Eigen::AngleAxisd(quaternion_data_.x(), Eigen::Vector3d::UnitY()) *
-    Eigen::AngleAxisd(quaternion_data_.y(), Eigen::Vector3d::UnitX())
+  Eigen::Quaterniond dji_quat(
+          dji_quaternion_data_.q0,
+          dji_quaternion_data_.q1,
+          dji_quaternion_data_.q2,
+          dji_quaternion_data_.q3
   );
-  imu_msg.orientation.x         = quat_pos_.x();
-  imu_msg.orientation.y         = quat_pos_.y();
-  imu_msg.orientation.z         = quat_pos_.z();
-  imu_msg.orientation.w         = quat_pos_.w();
-  imu_msg.linear_acceleration.x = acc_body_data_.x();
-  imu_msg.linear_acceleration.y = acc_body_data_.y();
-  imu_msg.linear_acceleration.z = acc_body_data_.z();
+  Eigen::Quaterniond quat_ned =
+          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ())
+          * dji_quat;
+  imu_msg.orientation.x = quat_ned.x();
+  imu_msg.orientation.y = quat_ned.y();
+  imu_msg.orientation.z = quat_ned.z();
+  imu_msg.orientation.w = quat_ned.w();
+
+  imu_msg.linear_acceleration.x =  acc_raw_data_.x();
+  imu_msg.linear_acceleration.y = -acc_raw_data_.y();
+  imu_msg.linear_acceleration.z = -acc_raw_data_.z();
+
   imu_msg.angular_velocity.x    = angular_rate_fused_data_.x();
   imu_msg.angular_velocity.y    = angular_rate_fused_data_.y();
   imu_msg.angular_velocity.z    = angular_rate_fused_data_.z();
@@ -445,22 +496,26 @@ void PayloadSdkInterface::publishImuMavrosData(){
 
 
 void PayloadSdkInterface::feedPositionDataProcess(){
-  position_fused_data_ = Eigen::Vector3d(dji_position_fused_data_.latitude,
-                                         dji_position_fused_data_.longitude,
-                                         dji_position_fused_data_.altitude);
+  position_fused_data_ =
+          Eigen::Vector3d(dji_position_fused_data_.latitude / M_PI * 180.0,
+                          dji_position_fused_data_.longitude / M_PI * 180.0,
+                          dji_position_fused_data_.altitude);
   if (gps_ready_){
-    xyz_pos_ = NEU2XYZ(position_fused_data_);
+    xyz_pos_ = NEU2XYZ_New(position_fused_data_);
+    std::cout << "xyz_pos_: " << xyz_pos_.transpose() << std::endl;
+    // std::cout << "positon fused data: " << position_fused_data_.transpose() << std::endl;
   }
 
   ros::Time cur_time = ros::Time::now();
   double duration = (cur_time - last_pos_fused_recv_time_).toSec();
-  last_mavros_cmd_time_ = cur_time;
+  last_pos_fused_recv_time_ = cur_time;
 
   if (duration > 0.5 && position_fused_ready_flag_)
     position_fused_ready_flag_ = false;
-  else if (duration <= 0.1 && !position_fused_ready_flag_){
+  else if (duration <= 0.11 && !position_fused_ready_flag_){
     position_fused_ready_flag_ = true;
     if (dji_ctrl_first_init_ && gps_ready_){
+      INFO_MSG_YELLOW("\n\n[DJI]: *** DJI offboard controller first init ...");
       dji_ctrl_first_init_ = false;
       T_DjiFlightControllerRidInfo rid_info;
       // rid_info.latitude  = 22.542812;
@@ -474,7 +529,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
         INFO_MSG_RED("[DJI]: init flight controller error, quit program");
         exit(1);
       }
-      INFO_MSG_GREEN("\n[DJI]: *** DJI offboard controller first init success !");
+      INFO_MSG_GREEN("[DJI]: *** DJI offboard controller first init success !\n\n");
     }
   }
 }
@@ -485,6 +540,7 @@ void PayloadSdkInterface::feedGPSDetailsDataProcess(){
     gps_ready_ = true;
     neu_pos_init_ = position_fused_data_;
     INFO_MSG_GREEN("[DJI]: GPS position accuracy is good, ready to fly !");
+    INFO_MSG_GREEN("[DJI]: POSE FUSED DATA INIT -> " << position_fused_data_.transpose());
     INFO_MSG_GREEN("[DJI]: GPS INIT position: " << position_fused_data_.transpose());
   }
 }
@@ -507,6 +563,17 @@ void PayloadSdkInterface::djiDestroySubscription(std::string topic_name, E_DjiFc
   }
 }
 
+/**
+ * @brief 从 ROS 参数服务器读取参数值。
+ *
+ * 该函数是一个模板函数，可用于读取不同类型的参数。如果在 ROS 参数服务器中找到指定名称的参数，
+ * 则将其值赋给传入的引用变量；若未找到，则使用默认值，并输出相应的提示信息。
+ *
+ * @tparam T 参数的类型，函数会根据实际传入的参数类型自动推导。
+ * @param param_name 要读取的参数在 ROS 参数服务器中的名称。
+ * @param param_val 用于存储读取到的参数值的引用变量。
+ * @param default_val 当参数未在 ROS 参数服务器中找到时使用的默认值。
+ */
 template<typename T>
 void PayloadSdkInterface::readParam(std::string param_name, T &param_val, T default_val) {
   if (!nh_.param(param_name, param_val, default_val))
@@ -515,6 +582,16 @@ void PayloadSdkInterface::readParam(std::string param_name, T &param_val, T defa
     INFO_MSG_GREEN("[DJI] | param: " << param_name << " found: " << param_val);
 }
 
+/**
+ * @brief 切换飞行器的控制设备。
+ *
+ * 该函数可将飞行器的控制设备在机载控制（offboard）模式和遥控器（RC）模式之间进行切换。
+ * 若切换到机载控制模式，会尝试获取机载控制权限；若切换到遥控器模式，会先执行紧急制动，
+ * 随后恢复运动并释放机载控制权限。
+ *
+ * @param device 目标控制设备，取值为 `CTRL_DEVICE_OFFBOARD` 或 `CTRL_DEVICE_RC`。
+ * @return bool 若切换成功返回 `true`，否则返回 `false`。
+ */
 bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
   if (device == CTRL_DEVICE_OFFBOARD){
     INFO_MSG_YELLOW("[DJI]: Warning, switch to offboard mode ... ");
@@ -558,6 +635,12 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
   return true;
 }
 
+/**
+ * @brief 将笛卡尔坐标系下的 XYZ 坐标转换为东北天 (NEU) 坐标系下的经纬度和海拔。
+ *
+ * @param pos 笛卡尔坐标系下的 XYZ 坐标向量。
+ * @return Eigen::Vector3d 东北天 (NEU) 坐标系下的向量，包含纬度、经度和海拔。
+ */
 Eigen::Vector3d PayloadSdkInterface::xyz2NEU(const Eigen::Vector3d& pos){
   double Ax=6383487.606;
   double Bx=5357.31;
@@ -572,6 +655,15 @@ Eigen::Vector3d PayloadSdkInterface::xyz2NEU(const Eigen::Vector3d& pos){
   return Eigen::Vector3d(lati, longi, alt);
 }
 
+/**
+ * @brief 将东北天 (NEU) 坐标系下的经纬度和海拔转换为笛卡尔坐标系下的 XYZ 坐标。
+ *
+ * 该函数根据输入的东北天 (NEU) 坐标系下的向量，结合初始的 NEU 位置，
+ * 利用地球椭球参数进行坐标转换，得到对应的笛卡尔坐标系下的 XYZ 坐标。
+ *
+ * @param enu 东北天 (NEU) 坐标系下的向量，包含纬度、经度和海拔。
+ * @return Eigen::Vector3d 笛卡尔坐标系下的 XYZ 坐标向量。
+ */
 Eigen::Vector3d PayloadSdkInterface::NEU2XYZ(const Eigen::Vector3d& enu){
   double Ax = 6383487.606;
   double Bx = 5357.31;
@@ -586,5 +678,18 @@ Eigen::Vector3d PayloadSdkInterface::NEU2XYZ(const Eigen::Vector3d& enu){
   double y = ((enu.x() - neu_pos_init_.x()) * (Ay - By * cos_lat * cos_lat)) / dPI;
   double z = enu.z() - neu_pos_init_.z();
 
+  return Eigen::Vector3d(x, y, z);
+}
+
+Eigen::Vector3d PayloadSdkInterface::NEU2XYZ_New(const Eigen::Vector3d &enu) {
+  double Ax = 6383487.606;
+  double Bx = 5357.31;
+  double Ay = 6367449.134;
+  double By = 32077.0;
+  double dPI = 57.295779512;
+  double lat_a = (neu_pos_init_.x() + enu.x()) / 2.0;
+  double x = static_cast<double> ((Ax * cos(lat_a / dPI) - Bx * (cos(lat_a / dPI) * cos(lat_a / dPI) * cos(lat_a / dPI))) * (enu.y() - neu_pos_init_.y()) / dPI);
+  double y = static_cast<double> ((Ay - By * (cos(lat_a / dPI) * cos(lat_a / dPI))) * (enu.x() - neu_pos_init_.x()) / dPI); //y_abs是北向
+  double z = static_cast<double> (enu.z() - neu_pos_init_.z());
   return Eigen::Vector3d(x, y, z);
 }
