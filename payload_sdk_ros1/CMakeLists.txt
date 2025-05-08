@@ -224,3 +224,6 @@ target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
 add_executable(test1 src/test.cpp)
 target_link_libraries(test1 ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+
+add_executable(livox_data_trans src/livox_data_trans.cpp)
+target_link_libraries(livox_data_trans ${catkin_LIBRARIES} ${PCL_LIBRARIES})

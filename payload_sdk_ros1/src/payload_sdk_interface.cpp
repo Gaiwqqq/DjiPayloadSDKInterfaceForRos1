@@ -468,12 +468,14 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
 void PayloadSdkInterface::livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
   if (msg->points.empty()) return;
 
+  Eigen::Matrix4d livox2body_matrix = _livox2body_matrix;
+
   ros::Time cur_time = ros::Time::now();
   sensor_msgs::PointCloud2 cloud_msg;
   pcl::PointCloud<pcl::PointXYZI> pcl_cloud;
   for (auto &point : msg->points) {
     Eigen::Vector4d point_4d(point.x, point.y, point.z, 1.0);
-    Eigen::Vector4d point_4d_trans = _livox2body_matrix * point_4d;
+    Eigen::Vector4d point_4d_trans = livox2body_matrix * point_4d;
 
     pcl::PointXYZI pcl_point;
     pcl_point.x = point_4d_trans.x();
@@ -489,7 +491,6 @@ void PayloadSdkInterface::livoxCallback(const livox_ros_driver::CustomMsg::Const
 
   ROS_WARN_STREAM_THROTTLE(2.0, "[DJI]: Livox data recv process spend time : "
             << (ros::Time::now() - cur_time).toSec() * 1e3 << " ms");
-
 }
 
 void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg){
