@@ -34,9 +34,12 @@
 #include <std_msgs/Int8.h>
 #include <sensor_msgs/Imu.h>
 #include <nav_msgs/Odometry.h>
-#include <payload_sdk_ros1/imu_60.h>
+#include <com_package/imu_60.h>
+#include <flyctrl/flyctrl_send.h>
 
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <visualization_msgs/Marker.h>
 
@@ -66,7 +69,7 @@ public:
 private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
-  ros::Subscriber mavros_cmd_sub_, offboard_switch_sub_;
+  ros::Subscriber ctrl_cmd_sub_, offboard_switch_sub_, custom_60_cmd_sub_;
   ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_, vis_pub_;
 
   tf2_ros::TransformBroadcaster tf_broadcaster_;
@@ -96,6 +99,7 @@ private:
 
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
+  flyctrl::flyctrl_send                custom_60_cmd_data_recv_;
 
   // data transmission
   Eigen::Vector3d              acc_body_data_, acc_ground_data_, acc_raw_data_; // (ax, ay, az)
@@ -113,17 +117,21 @@ private:
   Eigen::Vector3d              xyz_pos_neu_;             // (x, y, z)
   double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
 
+  // ctrl cmd data
+  Eigen::Vector4d              vel_ctrl_cmd_data_frd_;   // (vx, vy, vz, yaw_rate) -> FRD coordinate
+
   // counters
   uint32_t                      quaternion_recv_counter_;
 
   // flags
-  bool                          is_quaternion_disp_, mavros_cmd_heartbeat_ready_, position_fused_ready_flag_;
+  bool                          is_quaternion_disp_, cytl_cmd_heartbeat_ready_, position_fused_ready_flag_;
   bool                          is_gps_convergent_, dji_ctrl_first_init_;
   CtrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
-  ros::Time                     last_mavros_cmd_time_, last_pos_fused_recv_time_;
+  ros::Time                     last_ctrl_cmd_time_, last_pos_fused_recv_time_;
   bool                          gps_ready_;
+  string                        ctrl_cmd_type_;
 
   // throttles
   double                        _gps_accuracy_thres;
@@ -132,6 +140,7 @@ private:
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
   void mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg);
+  void custom60CmdCallback(const flyctrl::flyctrl_send::ConstPtr &msg);
   void offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg);
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
 
@@ -157,7 +166,7 @@ private:
   void drawVel();
   void drawRangeCircles();
 
-  Eigen::Vector3d xyz2NEU(const Eigen::Vector3d& pos);
+  Eigen::Vector3d XYZ2LLA(const Eigen::Vector3d& xyz);
   Eigen::Vector3d LLA2XYZ(const Eigen::Vector3d& lla);
 };
 

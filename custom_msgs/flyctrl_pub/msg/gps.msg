@@ -1,0 +1,3 @@
+float64 Longitude_degree
+float64 Latitude_degree
+float64 Altitude_m

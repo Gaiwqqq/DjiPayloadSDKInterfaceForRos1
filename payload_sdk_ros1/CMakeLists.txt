@@ -94,7 +94,7 @@ generate_messages(
 catkin_package(
         INCLUDE_DIRS include
         LIBRARIES payload_sdk_ros1
-        CATKIN_DEPENDS roscpp rospy std_msgs
+        CATKIN_DEPENDS roscpp rospy std_msgs com_package flyctrl
         DEPENDS system_lib
 )
 
@@ -210,7 +210,6 @@ add_executable(${PROJECT_NAME}
         ${MODULE_HAL_SRC}
         src/dji_ctrl_midware_node.cpp
         src/payload_sdk_interface.cpp
-
 )
 target_include_directories(${PROJECT_NAME} PRIVATE ${OpenCV_INCLUDE_DIRS})
 
@@ -220,3 +219,7 @@ target_link_libraries(${PROJECT_NAME} usb-1.0)
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_link_libraries(${PROJECT_NAME} m)
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+
+
+add_executable(test1 src/test.cpp)
+target_link_libraries(test1 ${catkin_LIBRARIES} ${PCL_LIBRARIES})

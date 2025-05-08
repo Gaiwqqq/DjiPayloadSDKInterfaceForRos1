@@ -1,0 +1,14 @@
+std_msgs/Header header
+uint32 dataHeader
+uint32 frameID
+flyctrl/gps[] pPoint
+uint8 nPoint
+int32 courseAngleRad
+uint8 planning_state
+flyctrl/gps pos
+flyctrl/gps left_obs
+flyctrl/gps middle_obs
+flyctrl/gps right_obs
+uint16 nSize 
+uint8 checksum1
+uint8 checksum2

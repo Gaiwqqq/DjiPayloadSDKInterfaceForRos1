@@ -1,0 +1,21 @@
+std_msgs/Header header
+float32 lat
+float32 alt
+float32 lon
+float32 Vx
+float32 Vy
+float32 Vz
+float32 Roll
+float32 Yaw
+float32 Pitch
+float32 RollRate
+float32 YawRate
+float32 PitchRate
+float32 Ax
+float32 Ay
+float32 Az
+uint8 SensorStatus
+uint8 WorkStatus
+uint8 NaviStatus
+
+#sensor_msgs/PointCloud2 a

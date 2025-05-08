@@ -1,0 +1,4 @@
+<launch>
+    <!-- 启动 rviz 节点 -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find payload_sdk_ros1)/launch/vis.rviz" required="true" />
+</launch>

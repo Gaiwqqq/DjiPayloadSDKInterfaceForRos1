@@ -1,8 +1,4 @@
 #include "../include/payload_sdk_ros1/payload_sdk_interface.h"
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-
-
 
 PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *osal_handler){
   // ros init
@@ -31,13 +27,13 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   is_quaternion_disp_           = false;
   is_gps_convergent_            = false;
   cur_ctrl_device_              = CTRL_DEVICE_RC;
-  mavros_cmd_heartbeat_ready_   = false;
+  cytl_cmd_heartbeat_ready_   = false;
   position_fused_ready_flag_    = false;
   dji_ctrl_first_init_          = true;
   gps_ready_                    = false;
 
-  last_mavros_cmd_time_     = ros::Time::now();
-  last_pos_fused_recv_time_ = last_mavros_cmd_time_;
+  last_ctrl_cmd_time_     = ros::Time::now();
+  last_pos_fused_recv_time_ = last_ctrl_cmd_time_;
 
   mavros_cmd_type_mask_velctrl_only_ =
           mavros_msgs::PositionTarget::IGNORE_PX  | mavros_msgs::PositionTarget::IGNORE_PY  | mavros_msgs::PositionTarget::IGNORE_PZ  |
@@ -98,17 +94,23 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW, freq_map[5], nullptr);
 
   // -------------------- ros init --------------------------//
-  std::string topic_nav_pub, topic_mavros_sub;
+  std::string topic_nav_pub, topic_ctrl_sub;
   readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
-  readParam<std::string>("dji/topic_mavros_sub", topic_mavros_sub, "/mavros/setpoint_raw/local");
+  readParam<std::string>("dji/topic_ctrl_sub", topic_ctrl_sub, "/mavros/setpoint_raw/local");
   readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
   readParam<double>("dji/data_loop_rate", _data_loop_rate, 10.0);
+  readParam<string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
 
-  mavros_cmd_sub_      = nh_.subscribe(topic_mavros_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
-                                       this , ros::TransportHints().tcpNoDelay());
+  if (ctrl_cmd_type_ == "mavros")
+    ctrl_cmd_sub_ = nh_.subscribe(topic_ctrl_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
+                                  this , ros::TransportHints().tcpNoDelay());
+  else if (ctrl_cmd_type_ == "60")
+    custom_60_cmd_sub_ = nh_.subscribe(topic_ctrl_sub, 2, &PayloadSdkInterface::custom60CmdCallback,
+                                       this, ros::TransportHints().tcpNoDelay());
+
   offboard_switch_sub_ = nh_.subscribe("/dji/offboard_switch", 2, &PayloadSdkInterface::offboardSwitchCallback,
                                        this, ros::TransportHints().tcpNoDelay());
-  imu_60_pub_          = nh_.advertise<payload_sdk_ros1::imu_60>(topic_nav_pub, 2);
+  imu_60_pub_          = nh_.advertise<com_package::imu_60>(topic_nav_pub, 2);
   odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
   imu_trans_pub_       = nh_.advertise<sensor_msgs::Imu>("/dji/imu_trans", 2);
   vis_pub_             = nh_.advertise<visualization_msgs::Marker>("/dji/vis", 2);
@@ -231,6 +233,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   }
   else{
     angular_rate_fused_data_ = Eigen::Vector3d(dji_angular_rate_fused_data_.x, dji_angular_rate_fused_data_.y, dji_angular_rate_fused_data_.z);
+    std::cout << "angular_rate_fused_data_: " << angular_rate_fused_data_.transpose() << std::endl;
   }
 
   // Vel
@@ -370,44 +373,60 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 // 机体坐标系 FRD (前右下)
 // 大地坐标系 NED (北东地)
 void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
-  if (!mavros_cmd_heartbeat_ready_) return;
+  ros::Time cur_time = ros::Time::now();
+  double time_duration = (cur_time - last_ctrl_cmd_time_).toSec();
+  if (time_duration > 0.5 && cytl_cmd_heartbeat_ready_){
+    INFO_MSG_RED("\n ***[DJI]: Warning, ctrl cmd data not received in 500ms, lost heartbeat !");
+    cytl_cmd_heartbeat_ready_ = false;
+    vel_ctrl_cmd_data_frd_ = Eigen::Vector4d::Zero();
+  }
+  else if (time_duration < 0.5 && !cytl_cmd_heartbeat_ready_){
+    INFO_MSG_GREEN("\n ***[DJI]: ctrl cmd data heartbeat recovered !");
+    cytl_cmd_heartbeat_ready_ = true;
+  }
+
+  if (!cytl_cmd_heartbeat_ready_) return;
   if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
   if (cur_ctrl_mode_ == NOT_SET) return ;
 
   if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
-    if (mavros_cmd_data_recv_.type_mask != mavros_cmd_type_mask_velctrl_only_ ||
-        mavros_cmd_data_recv_.coordinate_frame != mavros_msgs::PositionTarget::FRAME_BODY_NED){
-      INFO_MSG_RED("[DJI]: Warning, mavros cmd data type mask not match, only velctrl data is accepted !");
-      return;
+    if (ctrl_cmd_type_ == "mavros"){
+      if (mavros_cmd_data_recv_.type_mask != mavros_cmd_type_mask_velctrl_only_ ||
+          mavros_cmd_data_recv_.coordinate_frame != mavros_msgs::PositionTarget::FRAME_BODY_NED){
+        INFO_MSG_RED("[DJI]: Warning, mavros cmd data type mask not match, only vel-body-ctrl data is accepted !");
+        return;
+      }
     }
     T_DjiFlightControllerJoystickCommand joystick_cmd =
-            {static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.x),
-             static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.y),
-             static_cast<dji_f32_t>(mavros_cmd_data_recv_.velocity.z),
-             static_cast<dji_f32_t>(mavros_cmd_data_recv_.yaw_rate)};
+            {static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.x()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.y()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.z()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.w())};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
 }
 
 void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg){
-  ros::Time cur_time    = ros::Time::now();
-  double time_duration  = (cur_time - last_mavros_cmd_time_).toSec();
-  last_mavros_cmd_time_ = cur_time;
-  if (time_duration > 0.5 && mavros_cmd_heartbeat_ready_){
-    INFO_MSG_RED("[DJI]: Warning, mavros cmd data not received in 500ms, lost heartbeat !");
-    mavros_cmd_heartbeat_ready_ = false;
-  }
-  else if (time_duration < 0.5 && !mavros_cmd_heartbeat_ready_){
-    INFO_MSG_GREEN("[DJI]: mavros cmd data heartbeat recovered !");
-    mavros_cmd_heartbeat_ready_ = true;
-  }
-
+  last_pos_fused_recv_time_ = ros::Time::now();
   mavros_cmd_data_recv_ = *msg;
+  vel_ctrl_cmd_data_frd_[0] =  msg->velocity.x;
+  vel_ctrl_cmd_data_frd_[1] = -msg->velocity.y;
+  vel_ctrl_cmd_data_frd_[2] = -msg->velocity.z;
+  vel_ctrl_cmd_data_frd_[3] =  msg->yaw_rate / 180.0 * M_PI;
+}
+
+void PayloadSdkInterface::custom60CmdCallback(const flyctrl::flyctrl_send::ConstPtr &msg) {
+  last_ctrl_cmd_time_ = ros::Time::now();
+  custom_60_cmd_data_recv_ = *msg;
+  vel_ctrl_cmd_data_frd_[0] =  msg->u_sp;
+  vel_ctrl_cmd_data_frd_[1] =  msg->v_sp;
+  vel_ctrl_cmd_data_frd_[2] = -msg->w_sp;
+  vel_ctrl_cmd_data_frd_[3] =  msg->r_sp / 180.0 * M_PI;
 }
 
 void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg){
   std_msgs::Int8 mode = *msg;
-  if (!gps_ready_ || !position_fused_ready_flag_ || !mavros_cmd_heartbeat_ready_){
+  if (!gps_ready_ || !position_fused_ready_flag_ || !cytl_cmd_heartbeat_ready_){
     INFO_MSG_RED("[DJI]: Not ready, Can't switch control device !");
     return ;
   }
@@ -439,7 +458,7 @@ void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr&
 }
 
 void PayloadSdkInterface::publishImu60Data(){
-  payload_sdk_ros1::imu_60 imu60_msg;
+  com_package::imu_60 imu60_msg;
   ros::WallTime t = ros::WallTime::now();
   imu60_msg.header.stamp = ros::Time(t.sec, t.nsec);
 
@@ -450,16 +469,22 @@ void PayloadSdkInterface::publishImu60Data(){
   imu60_msg.Vy        = static_cast<float>(velocity_data_neu_.y());
   imu60_msg.Vz        = static_cast<float>(velocity_data_neu_.z());
 
-  // todo: 角度转换存疑，不确定 ！！！！
+  double yaw_rad = quaternion_data_.z() / 180.0 * M_PI;
+  yaw_rad = M_PI / 2.0 - yaw_rad;
+  if (yaw_rad < 0) yaw_rad = M_PI * 2.0 + yaw_rad;
+  double yaw_fix = yaw_rad * 180 / M_PI;
+
   imu60_msg.Pitch     = static_cast<float>(quaternion_data_.x());
   imu60_msg.Roll      = static_cast<float>(quaternion_data_.y());
-  imu60_msg.Yaw       = static_cast<float>(quaternion_data_.z());
+  imu60_msg.Yaw       = static_cast<float>(yaw_fix);
+
   imu60_msg.RollRate  = static_cast<float>(angular_rate_fused_data_.x());
   imu60_msg.PitchRate = static_cast<float>(angular_rate_fused_data_.y());
   imu60_msg.YawRate   = static_cast<float>(angular_rate_fused_data_.z());
+
   imu60_msg.Ax        = static_cast<float>(acc_raw_data_.x());
-  imu60_msg.Ay        = static_cast<float>(acc_raw_data_.y());
-  imu60_msg.Az        = static_cast<float>(acc_raw_data_.z());
+  imu60_msg.Ay        = static_cast<float>(-acc_raw_data_.y());
+  imu60_msg.Az        = static_cast<float>(-acc_raw_data_.z());
 
   imu60_msg.SensorStatus = 25;
   imu60_msg.WorkStatus   = 8;
@@ -513,20 +538,10 @@ void PayloadSdkInterface::publishImuMavrosData(){
   imu_msg.header.stamp = ros::Time::now();
   imu_msg.header.frame_id = "world";
 
-  Eigen::Quaterniond dji_quat(
-          dji_quaternion_data_.q0,
-          dji_quaternion_data_.q1,
-          dji_quaternion_data_.q2,
-          dji_quaternion_data_.q3
-  );
-  Eigen::Quaterniond quat_ned =
-          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
-          Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ())
-          * dji_quat;
-  imu_msg.orientation.x = quat_ned.x();
-  imu_msg.orientation.y = quat_ned.y();
-  imu_msg.orientation.z = quat_ned.z();
-  imu_msg.orientation.w = quat_ned.w();
+  imu_msg.orientation.x = quaternion_world_.x();
+  imu_msg.orientation.y = quaternion_world_.y();
+  imu_msg.orientation.z = quaternion_world_.z();
+  imu_msg.orientation.w = quaternion_world_.w();
 
   imu_msg.linear_acceleration.x =  acc_raw_data_.x();
   imu_msg.linear_acceleration.y = -acc_raw_data_.y();
@@ -778,24 +793,32 @@ void PayloadSdkInterface::drawRangeCircles() {
   }
 }
 
-/**
- * @brief 将笛卡尔坐标系下的 XYZ 坐标转换为东北天 (NEU) 坐标系下的经纬度和海拔。
- *
- * @param pos 笛卡尔坐标系下的 XYZ 坐标向量。
- * @return Eigen::Vector3d 东北天 (NEU) 坐标系下的向量，包含纬度、经度和海拔。
- */
-Eigen::Vector3d PayloadSdkInterface::xyz2NEU(const Eigen::Vector3d& pos){
-  double Ax=6383487.606;
-  double Bx=5357.31;
-  double Ay=6367449.134;
-  double By=32077.0;
-  double dPI=57.295779512;
+Eigen::Vector3d PayloadSdkInterface::XYZ2LLA(const Eigen::Vector3d& xyz){
+  double Ax = 6383487.606;
+  double Bx = 5357.31;
+  double Ay = 6367449.134;
+  double By = 32077.0;
+  double dPI = 57.295779512; // 角度转弧度的系数（180/π）
 
-  double cos_lat = cos(neu_pos_init_.x() / dPI);
-  double longi = neu_pos_init_.y() + (pos(0) * dPI) / (Ax * cos_lat - Bx * cos_lat * cos_lat * cos_lat);
-  double lati = neu_pos_init_.x() + (pos(1) * dPI) / (Ay - By * cos_lat * cos_lat);
-  double alt = pos(2) + neu_pos_init_.z();
-  return Eigen::Vector3d(lati, longi, alt);
+  // 初始猜测平均纬度，这里简单用初始纬度
+  double lat_a = neu_pos_init_.x();
+  double tolerance = 1e-8;
+  double delta = 1.0;
+
+  // 迭代求解平均纬度
+  while (delta > tolerance) {
+    double term1 = Ay - By * std::pow(std::cos(lat_a / dPI), 2);
+    double new_lat = (xyz.x() * dPI / term1) + neu_pos_init_.x();
+    double new_lat_a = (neu_pos_init_.x() + new_lat) / 2.0;
+    delta = std::abs(new_lat_a - lat_a);
+    lat_a = new_lat_a;
+  }
+
+  double lat = (xyz.x() * dPI) / (Ay - By * std::pow(std::cos(lat_a / dPI), 2)) + neu_pos_init_.x();
+  double lon = - (xyz.y() * dPI) / (Ax * std::cos(lat_a / dPI) - Bx * std::pow(std::cos(lat_a / dPI), 3)) + neu_pos_init_.y();
+  double alt = xyz.z() + neu_pos_init_.z();
+
+  return Eigen::Vector3d(lat, lon, alt);
 }
 
 Eigen::Vector3d PayloadSdkInterface::LLA2XYZ(const Eigen::Vector3d &lla) {
@@ -806,11 +829,8 @@ Eigen::Vector3d PayloadSdkInterface::LLA2XYZ(const Eigen::Vector3d &lla) {
   double dPI = 57.295779512; // 角度转弧度的系数（180/π）
   double lat_a = (neu_pos_init_.x() + lla.x()) / 2.0; // 平均纬度
 
-  // 计算 X 坐标，X 轴指北
-  double y = -((Ax * cos(lat_a / dPI) - Bx * pow(cos(lat_a / dPI), 3)) * (lla.y() - neu_pos_init_.y())) / dPI;
-  // 计算 Y 坐标，Y 轴指东
   double x = ((Ay - By * pow(cos(lat_a / dPI), 2)) * (lla.x() - neu_pos_init_.x())) / dPI;
-  // 计算 Z 坐标，Z 轴指天
+  double y = -((Ax * cos(lat_a / dPI) - Bx * pow(cos(lat_a / dPI), 3)) * (lla.y() - neu_pos_init_.y())) / dPI;
   double z = lla.z() - neu_pos_init_.z();
 
   return Eigen::Vector3d(x, y, z);

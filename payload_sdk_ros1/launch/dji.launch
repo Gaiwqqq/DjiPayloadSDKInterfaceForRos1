@@ -1,8 +1,9 @@
 <launch>
     <node name="payload_sdk_ros1_node" pkg="payload_sdk_ros1" type="payload_sdk_ros1" output="screen" >
         <param name="dji/topic_nav_pub" value="/guandao1" type="string"/>
-        <param name="dji/topic_mavros_sub" value="/mavros/setpoint_raw/local" type="string"/>
+        <param name="dji/topic_ctrl_sub" value="/mavros/setpoint_raw/local" type="string"/>
         <param name="dji/gps_accuracy_threshold" value="2.0" type="double"/>
         <param name="dji/data_loop_rate" value="10.0" type="double"/>
+        <param name="dji/cmd_type" value="60" type="string"/>      <!-- mavros OR 60 -->
     </node>
 </launch>
