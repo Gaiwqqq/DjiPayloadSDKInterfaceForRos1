@@ -30,18 +30,26 @@
 #include <utils/util_misc.h>
 #include <dji_flight_controller.h>
 
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+
 #include <mavros_msgs/PositionTarget.h>
 #include <std_msgs/Int8.h>
 #include <sensor_msgs/Imu.h>
 #include <nav_msgs/Odometry.h>
 #include <com_package/imu_60.h>
 #include <flyctrl/flyctrl_send.h>
-
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <visualization_msgs/Marker.h>
+#include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <livox_ros_driver/CustomMsg.h>
+#include <sensor_msgs/PointCloud2.h>
+
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #define INFO_MSG(str)        do {std::cout << str << std::endl; } while(false)
 #define INFO_MSG_RED(str)    do {std::cout << "\033[31m" << str << "\033[0m" << std::endl; } while(false)
@@ -70,7 +78,10 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber ctrl_cmd_sub_, offboard_switch_sub_, custom_60_cmd_sub_;
-  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_, vis_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_;
+  ros::Publisher  vis_pub_, path_vis_pub_;
+  ros::Subscriber livox_sub_;
+  ros::Publisher  livox_pub_;
 
   tf2_ros::TransformBroadcaster tf_broadcaster_;
 
@@ -119,6 +130,7 @@ private:
 
   // ctrl cmd data
   Eigen::Vector4d              vel_ctrl_cmd_data_frd_;   // (vx, vy, vz, yaw_rate) -> FRD coordinate
+  nav_msgs::Path               path_vis_data_;
 
   // counters
   uint32_t                      quaternion_recv_counter_;
@@ -136,6 +148,7 @@ private:
   // throttles
   double                        _gps_accuracy_thres;
   double                        _data_loop_rate;
+  Eigen::Matrix4d               _livox2body_matrix;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
@@ -143,6 +156,7 @@ private:
   void custom60CmdCallback(const flyctrl::flyctrl_send::ConstPtr &msg);
   void offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg);
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
+  void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr& msg);
 
   void feedPositionDataProcess();
   void feedGPSDetailsDataProcess();
@@ -165,9 +179,12 @@ private:
   // visualization
   void drawVel();
   void drawRangeCircles();
+  void drawPath();
 
+  void livoxTransInit();
   Eigen::Vector3d XYZ2LLA(const Eigen::Vector3d& xyz);
   Eigen::Vector3d LLA2XYZ(const Eigen::Vector3d& lla);
+
 };
 
 #endif //PAYLOAD_SDK_INTERFACE_H

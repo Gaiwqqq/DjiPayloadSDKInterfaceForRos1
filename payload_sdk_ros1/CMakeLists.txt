@@ -47,7 +47,7 @@ endif ()
 #set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 -Wall")
 
 set(CMAKE_C_FLAGS "-pthread -std=gnu99")
-set(CMAKE_CXX_FLAGS "-std=c++11 -pthread")
+set(CMAKE_CXX_FLAGS "-std=c++14 -pthread")
 set(CMAKE_EXE_LINKER_FLAGS "-pthread")
 #add_definitions(-D_GNU_SOURCE)
 
@@ -75,6 +75,7 @@ find_package(catkin REQUIRED COMPONENTS
     sensor_msgs
     message_generation
     tf2_ros
+    pcl_conversions
 )
 
 add_message_files(
@@ -94,7 +95,7 @@ generate_messages(
 catkin_package(
         INCLUDE_DIRS include
         LIBRARIES payload_sdk_ros1
-        CATKIN_DEPENDS roscpp rospy std_msgs com_package flyctrl
+        CATKIN_DEPENDS roscpp rospy std_msgs com_package flyctrl livox_ros_driver
         DEPENDS system_lib
 )
 

@@ -27,13 +27,19 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   is_quaternion_disp_           = false;
   is_gps_convergent_            = false;
   cur_ctrl_device_              = CTRL_DEVICE_RC;
-  cytl_cmd_heartbeat_ready_   = false;
+  cytl_cmd_heartbeat_ready_     = false;
   position_fused_ready_flag_    = false;
   dji_ctrl_first_init_          = true;
   gps_ready_                    = false;
 
   last_ctrl_cmd_time_     = ros::Time::now();
   last_pos_fused_recv_time_ = last_ctrl_cmd_time_;
+
+  geometry_msgs::PoseStamped pose;
+  pose.pose.position.x = 0.0;
+  pose.pose.position.y = 0.0;
+  pose.pose.position.z = 0.0;
+  path_vis_data_.poses.push_back(pose);
 
   mavros_cmd_type_mask_velctrl_only_ =
           mavros_msgs::PositionTarget::IGNORE_PX  | mavros_msgs::PositionTarget::IGNORE_PY  | mavros_msgs::PositionTarget::IGNORE_PZ  |
@@ -94,12 +100,16 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW, freq_map[5], nullptr);
 
   // -------------------- ros init --------------------------//
-  std::string topic_nav_pub, topic_ctrl_sub;
+  std::string topic_nav_pub, topic_ctrl_sub, topic_livox_sub;
+  bool livox_trans_enable;
   readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
   readParam<std::string>("dji/topic_ctrl_sub", topic_ctrl_sub, "/mavros/setpoint_raw/local");
   readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
   readParam<double>("dji/data_loop_rate", _data_loop_rate, 10.0);
   readParam<string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
+  readParam<string>("dji/livox_sub_topic", topic_livox_sub, "/livox/lidar");
+  readParam<bool>("dji/livox_trans_enable", livox_trans_enable, false);
+
 
   if (ctrl_cmd_type_ == "mavros")
     ctrl_cmd_sub_ = nh_.subscribe(topic_ctrl_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
@@ -114,6 +124,15 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   odom_trans_pub_      = nh_.advertise<nav_msgs::Odometry>("/dji/odom_trans", 2);
   imu_trans_pub_       = nh_.advertise<sensor_msgs::Imu>("/dji/imu_trans", 2);
   vis_pub_             = nh_.advertise<visualization_msgs::Marker>("/dji/vis", 2);
+  path_vis_pub_        = nh_.advertise<nav_msgs::Path>("/dji/path_vis", 2);
+
+  if (livox_trans_enable){
+    livoxTransInit();
+    livox_sub_         = nh_.subscribe(topic_livox_sub, 2, &PayloadSdkInterface::livoxCallback,
+                                       this, ros::TransportHints().tcpNoDelay());
+    livox_pub_         = nh_.advertise<sensor_msgs::PointCloud2>("/dji/livox", 2);
+  }
+
 
   if (dji_init_success){
     dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / _data_loop_rate), &PayloadSdkInterface::djiDataReadCallback, this);
@@ -167,6 +186,42 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   }
   INFO_MSG("[DJI]: Destoried data subscription module");
   INFO_MSG("[DJI]: Payload SDK interface deconstruct success... Goodbye!");
+}
+
+void PayloadSdkInterface::livoxTransInit() {
+  double x, y, z, pitch, roll, yaw;
+  readParam<double>("dji/livox_trans_matrix/x", x, 0.0);
+  readParam<double>("dji/livox_trans_matrix/y", y, 0.0);
+  readParam<double>("dji/livox_trans_matrix/z", z, 0.0);
+  readParam<double>("dji/livox_trans_matrix/pitch", pitch, 0.0);
+  readParam<double>("dji/livox_trans_matrix/roll", roll, 0.0);
+  readParam<double>("dji/livox_trans_matrix/yaw", yaw, 0.0);
+
+  pitch = pitch * M_PI / 180.0;
+  roll = roll * M_PI / 180.0;
+  yaw = yaw * M_PI / 180.0;
+
+  Eigen::Matrix3d rotX;
+  rotX << 1, 0, 0,
+          0, cos(roll), -sin(roll),
+          0, sin(roll), cos(roll);
+
+  Eigen::Matrix3d rotY;
+  rotY << cos(pitch), 0, sin(pitch),
+          0, 1, 0,
+          -sin(pitch), 0, cos(pitch);
+
+  Eigen::Matrix3d rotZ;
+  rotZ << cos(yaw), -sin(yaw), 0,
+          sin(yaw), cos(yaw), 0,
+          0, 0, 1;
+
+  Eigen::Matrix3d rotation = rotZ * rotY * rotX;
+  _livox2body_matrix = Eigen::Matrix4d::Identity();
+  _livox2body_matrix.block<3, 3>(0, 0) = rotation;
+  _livox2body_matrix(0, 3) = x;
+  _livox2body_matrix(1, 3) = y;
+  _livox2body_matrix(2, 3) = z;
 }
 
 void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
@@ -233,7 +288,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   }
   else{
     angular_rate_fused_data_ = Eigen::Vector3d(dji_angular_rate_fused_data_.x, dji_angular_rate_fused_data_.y, dji_angular_rate_fused_data_.z);
-    std::cout << "angular_rate_fused_data_: " << angular_rate_fused_data_.transpose() << std::endl;
+//    std::cout << "angular_rate_fused_data_: " << angular_rate_fused_data_.transpose() << std::endl;
   }
 
   // Vel
@@ -363,11 +418,15 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   }
 
   // ----------------------- ROS publish -----------------------------//
+  ros::Time cur_t = ros::Time::now();
   publishImu60Data();
   publishOdomData();
   publishImuMavrosData();
   drawVel();
   drawRangeCircles();
+  drawPath();
+  ROS_INFO_STREAM_THROTTLE(2.0, "[DJI]: Main data recv process spend time : " <<
+                            (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
 }
 
 // 机体坐标系 FRD (前右下)
@@ -404,6 +463,33 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
              static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.w())};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
+}
+
+void PayloadSdkInterface::livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
+  if (msg->points.empty()) return;
+
+  ros::Time cur_time = ros::Time::now();
+  sensor_msgs::PointCloud2 cloud_msg;
+  pcl::PointCloud<pcl::PointXYZI> pcl_cloud;
+  for (auto &point : msg->points) {
+    Eigen::Vector4d point_4d(point.x, point.y, point.z, 1.0);
+    Eigen::Vector4d point_4d_trans = _livox2body_matrix * point_4d;
+
+    pcl::PointXYZI pcl_point;
+    pcl_point.x = point_4d_trans.x();
+    pcl_point.y = point_4d_trans.y();
+    pcl_point.z = point_4d_trans.z();
+    pcl_point.intensity = point.reflectivity;
+    pcl_cloud.push_back(pcl_point);
+  }
+  pcl::toROSMsg(pcl_cloud, cloud_msg);
+  cloud_msg.header.frame_id = "livox_frame";
+  cloud_msg.header.stamp = ros::Time::now();
+  livox_pub_.publish(cloud_msg);
+
+  ROS_WARN_STREAM_THROTTLE(2.0, "[DJI]: Livox data recv process spend time : "
+            << (ros::Time::now() - cur_time).toSec() * 1e3 << " ms");
+
 }
 
 void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg){
@@ -791,6 +877,24 @@ void PayloadSdkInterface::drawRangeCircles() {
 
     vis_pub_.publish(marker);
   }
+}
+
+void PayloadSdkInterface::drawPath() {
+  path_vis_data_.header.stamp = ros::Time::now();
+  path_vis_data_.header.frame_id = "world";
+  geometry_msgs::PoseStamped last_pos = path_vis_data_.poses.back();
+  if ((xyz_pos_neu_ - Eigen::Vector3d(last_pos.pose.position.x,
+                                      last_pos.pose.position.y,
+                                      last_pos.pose.position.z)).norm() > 0.15){
+    geometry_msgs::PoseStamped new_pos;
+    new_pos.header.frame_id = "world";
+    new_pos.header.stamp = path_vis_data_.header.stamp;
+    new_pos.pose.position.x = xyz_pos_neu_.x();
+    new_pos.pose.position.y = xyz_pos_neu_.y();
+    new_pos.pose.position.z = xyz_pos_neu_.z();
+    path_vis_data_.poses.push_back(new_pos);
+  }
+  path_vis_pub_.publish(path_vis_data_);
 }
 
 Eigen::Vector3d PayloadSdkInterface::XYZ2LLA(const Eigen::Vector3d& xyz){
