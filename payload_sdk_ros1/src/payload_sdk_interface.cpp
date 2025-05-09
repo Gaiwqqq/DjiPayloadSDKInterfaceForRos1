@@ -125,6 +125,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   }
 
   if (dji_init_success){
+    INFO_MSG("[DJI] | data_loop_rate : " << _data_loop_rate << " Hz");
     dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / _data_loop_rate), &PayloadSdkInterface::djiDataReadCallback, this);
     dji_flyctrl_pub_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiFlyCtrlPubCallback, this);
     dji_flyctrl_pub_timer_.stop();
@@ -293,7 +294,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get velocity data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else feedVelDataProcess();
+  else {
+    feedVelDataProcess();
+  }
 
   // Quaternion
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
@@ -304,7 +307,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("[DJI]: get quaternion data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
   }
-  else feedQuaternionDataProcess();
+  else {
+    feedQuaternionDataProcess();
+  }
 
   // GPS position
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION,
@@ -327,7 +332,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
     INFO_MSG_RED("[DJI]: get gps details data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
-  }else{
+  }else {
     feedGPSDetailsDataProcess();
   }
 
@@ -428,7 +433,9 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
     INFO_MSG_RED("[DJI]: get rc with flag data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_ << std::endl);
-  }else feedRCDataProcess();
+  }else {
+    feedRCDataProcess();
+  }
 
   // ----------------------- ROS publish -----------------------------//
   ros::Time cur_t = ros::Time::now();
@@ -438,8 +445,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   drawVel();
   drawRangeCircles();
   drawPath();
-//  ROS_INFO_STREAM_THROTTLE(2.0, "[DJI]: Main data recv process spend time : " <<
-//                            (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
+  ROS_INFO_STREAM_THROTTLE(5.0, "[DJI]: Main data recv process spend time : " <<
+                            (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
 }
 
 // 机体坐标系 FRD (前右下)
@@ -659,12 +666,12 @@ void PayloadSdkInterface::feedRCDataProcess() {
     if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR && cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD){
       gear_moniting_phase_     = 1;
       gear_change_start_time_ = ros::Time::now();
-      INFO_MSG_YELLOW("[DJI]: Gear RIGHT change detected, please hold over 3s ...");
+      INFO_MSG("[DJI]: Gear RIGHT change detected, please hold over 3s ...");
     }
     if (dji_rc_data_.gear <= DJI_RC_GEAR_LEFT_THR && cur_ctrl_device_ != CTRL_DEVICE_RC) {
       gear_moniting_phase_     = 2;
       gear_change_start_time_ = ros::Time::now();
-      INFO_MSG_YELLOW("[DJI]: Gear LEFT change detected, please hold over 3s ...");
+      INFO_MSG("[DJI]: Gear LEFT change detected, please hold over 3s ...");
     }
   }else if (gear_moniting_phase_ == 1){
     if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR){
@@ -673,6 +680,17 @@ void PayloadSdkInterface::feedRCDataProcess() {
       if (duration >= 3.0) {
         switchCtrlDevice(CTRL_DEVICE_OFFBOARD);
         reset_flag = true;
+        cur_ctrl_mode_ = OFFBOARD_VEL_BODY;
+        T_DjiFlightControllerJoystickMode joystick_mode = {
+                DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+                DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+                DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+                DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+                DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE
+        };
+        DjiFlightController_SetJoystickMode(joystick_mode);
+        dji_flyctrl_pub_timer_.start();
+        INFO_MSG_GREEN("[DJI]: *** DJI set joystick mode to vel-body-ctrl !!!");
       }
     }
     else {
@@ -743,6 +761,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
 
 void PayloadSdkInterface::feedGPSDetailsDataProcess(){
   gps_pos_accuracy_ = dji_gps_details_data_.pdop;
+  if (!gps_ready_) INFO_MSG("[DJI]: GPS position accuracy: " << gps_pos_accuracy_);
   if (gps_pos_accuracy_ <= _gps_accuracy_thres && !gps_ready_){
     gps_ready_ = true;
     neu_pos_init_ = position_fused_data_;

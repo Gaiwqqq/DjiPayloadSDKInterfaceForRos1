@@ -49,7 +49,7 @@ void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
   cloud_msg.header.stamp = ros::Time::now();
   livox_pub_.publish(cloud_msg);
 
-  ROS_WARN_STREAM_THROTTLE(10.0, "[LIVOX_TRANS]: Livox data recv process spend time : "
+  ROS_INFO_STREAM_THROTTLE(10.0, "[LIVOX_TRANS]: Livox data recv process spend time : "
           << (ros::Time::now() - cur_time).toSec() * 1e3 << " ms");
 }
 
