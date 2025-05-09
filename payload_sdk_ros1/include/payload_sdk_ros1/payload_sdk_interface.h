@@ -194,6 +194,7 @@ private:
   void livoxTransInit();
   Eigen::Vector3d XYZ2LLA(const Eigen::Vector3d& xyz);
   Eigen::Vector3d LLA2XYZ(const Eigen::Vector3d& lla);
+  Eigen::Quaterniond euler2Quaternion(const Eigen::Vector3d& euler); // (pitch, roll, yaw)
 
 };
 

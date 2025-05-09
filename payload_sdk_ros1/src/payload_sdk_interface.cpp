@@ -542,11 +542,11 @@ void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr&
     if (mode.data == 1){
       cur_ctrl_mode_ = OFFBOARD_VEL_BODY;
       T_DjiFlightControllerJoystickMode joystick_mode = {
-              DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
-              DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
-              DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
-              DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
-              DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE
+        DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+        DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE
       };
       DjiFlightController_SetJoystickMode(joystick_mode);
       dji_flyctrl_pub_timer_.start();
@@ -623,19 +623,35 @@ void PayloadSdkInterface::publishOdomData(){
 //
 //  odom_trans_pub_.publish(odom);
 
-  geometry_msgs::TransformStamped tf_msg;
-  tf_msg.header.stamp = ros::Time::now();
-  tf_msg.header.frame_id = "world";
-  tf_msg.child_frame_id  = "dji_body";
-  tf_msg.transform.rotation.x = quaternion_world_.x();
-  tf_msg.transform.rotation.y = quaternion_world_.y();
-  tf_msg.transform.rotation.z = quaternion_world_.z();
-  tf_msg.transform.rotation.w = quaternion_world_.w();
+  geometry_msgs::TransformStamped tf_djibody2world;
+  tf_djibody2world.header.stamp = ros::Time::now();
+  tf_djibody2world.header.frame_id = "world";
+  tf_djibody2world.child_frame_id  = "dji_body";
+  tf_djibody2world.transform.rotation.x = quaternion_world_.x();
+  tf_djibody2world.transform.rotation.y = quaternion_world_.y();
+  tf_djibody2world.transform.rotation.z = quaternion_world_.z();
+  tf_djibody2world.transform.rotation.w = quaternion_world_.w();
+  tf_djibody2world.transform.translation.x = xyz_pos_neu_.x();
+  tf_djibody2world.transform.translation.y = xyz_pos_neu_.y();
+  tf_djibody2world.transform.translation.z = xyz_pos_neu_.z();
+  tf_broadcaster_.sendTransform(tf_djibody2world);
 
-  tf_msg.transform.translation.x = xyz_pos_neu_.x();
-  tf_msg.transform.translation.y = xyz_pos_neu_.y();
-  tf_msg.transform.translation.z = xyz_pos_neu_.z();
-  tf_broadcaster_.sendTransform(tf_msg);
+  geometry_msgs::TransformStamped tf_livox2world;
+  tf_livox2world.header.stamp    = tf_djibody2world.header.stamp;
+  tf_livox2world.header.frame_id = "world";
+  tf_livox2world.child_frame_id  = "livox_frame";
+
+  Eigen::Vector3d    eural_angle(-quaternion_data_.x(), quaternion_data_.y(), -quaternion_data_.z());
+  Eigen::Quaterniond q = euler2Quaternion(eural_angle);
+
+  tf_livox2world.transform.rotation.x = q.x();
+  tf_livox2world.transform.rotation.y = q.y();
+  tf_livox2world.transform.rotation.z = q.z();
+  tf_livox2world.transform.rotation.w = q.w();
+  tf_livox2world.transform.translation.x = xyz_pos_neu_.x();
+  tf_livox2world.transform.translation.y = xyz_pos_neu_.y();
+  tf_livox2world.transform.translation.z = xyz_pos_neu_.z();
+  tf_broadcaster_.sendTransform(tf_livox2world);
 }
 
 void PayloadSdkInterface::publishImuMavrosData(){
@@ -872,6 +888,7 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
       return false;
     }
     DjiTest_WidgetLogAppend("[DJI]: Switch to rc mode success !");
+    INFO_MSG_GREEN("[DJI]: Release joystick control authority success, switch to rc mode success!");
     dji_flyctrl_pub_timer_.stop();
     cur_ctrl_device_ = CTRL_DEVICE_RC;
   }
@@ -1010,4 +1027,12 @@ Eigen::Vector3d PayloadSdkInterface::LLA2XYZ(const Eigen::Vector3d &lla) {
   double z = lla.z() - neu_pos_init_.z();
 
   return Eigen::Vector3d(x, y, z);
+}
+
+// in : pitch roll yaw
+Eigen::Quaterniond PayloadSdkInterface::euler2Quaternion(const Eigen::Vector3d &euler) {
+  Eigen::AngleAxisd rollAngle(euler.y() / 180.0 * M_PI, Eigen::Vector3d::UnitX());
+  Eigen::AngleAxisd pitchAngle(euler.x() / 180.0 * M_PI, Eigen::Vector3d::UnitY());
+  Eigen::AngleAxisd yawAngle(euler.z() / 180.0 * M_PI, Eigen::Vector3d::UnitZ());
+  return yawAngle * pitchAngle * rollAngle;
 }
