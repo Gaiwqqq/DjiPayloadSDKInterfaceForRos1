@@ -108,6 +108,8 @@ private:
   T_DjiFcSubscriptionRtkVelocity       dji_rtk_vel_data_{0};
   T_DjiFcSubscriptionRtkYaw            dji_rtk_yaw_data_{0};
 
+  T_DjiFcSubscriptionRC                dji_rc_data_{0};
+
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
   flyctrl::flyctrl_send                custom_60_cmd_data_recv_;

@@ -7,22 +7,6 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   // -------------------- DJI init --------------------------//
   dji_osal_handler_ = osal_handler;
 
-  dji_acc_body_data_            = {0};
-  dji_acc_ground_data_          = {0};
-  dji_acc_raw_data_             = {0};
-  dji_quaternion_data_          = {0};
-  dji_velocity_data_            = {0};
-  dji_gps_position_data_        = {0};
-  dji_timestamp_data_           = {0};
-  dji_single_battery_info_data_ = {0};
-  dji_position_fused_data_      = {0};
-  dji_altitude_fused_data_      = {0};
-  dji_flight_status_data_       = {0};
-  dji_flight_mode_data_         = {0};
-  dji_angular_rate_fused_data_  = {0};
-  dji_gps_details_data_         = {0};
-  dji_ctrl_device_data_         = {0};
-
   quaternion_recv_counter_      = 0;
   is_quaternion_disp_           = false;
   is_gps_convergent_            = false;
@@ -98,6 +82,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("rtk_vel", DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY, freq_map[5], nullptr);
   dji_init_success =
           djiCreateSubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW, freq_map[5], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC, freq_map[10], nullptr);
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_ctrl_sub, topic_livox_sub;
@@ -132,7 +118,6 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
                                        this, ros::TransportHints().tcpNoDelay());
     livox_pub_         = nh_.advertise<sensor_msgs::PointCloud2>("/dji/livox", 2);
   }
-
 
   if (dji_init_success){
     dji_data_read_timer_   = nh_.createTimer(ros::Duration(1.0 / _data_loop_rate), &PayloadSdkInterface::djiDataReadCallback, this);
@@ -178,6 +163,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("rtk_pos", DJI_FC_SUBSCRIPTION_TOPIC_RTK_POSITION);
   djiDestroySubscription("rtk_vel", DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY);
   djiDestroySubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW);
+  djiDestroySubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC);
   INFO_MSG("[DJI]: Destoried all subscription topics");
 
   djiStat_ = DjiFcSubscription_DeInit();
@@ -415,6 +401,18 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
     INFO_MSG_RED("[DJI]: get rtk yaw data error, timestamp: "
                          << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC,
+                                                     (uint8_t *) &dji_rc_data_,
+                                                     sizeof(T_DjiFcSubscriptionRC),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rc data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }else{
+//    INFO_MSG("***rc data roll :" << dji_rc_data_.roll << " pitch : " << dji_rc_data_.pitch << " yaw : " << dji_rc_data_.yaw << " throttle : " << dji_rc_data_.throttle);
+//    INFO_MSG("rc data mode : " << dji_rc_data_.mode << " gear : " << dji_rc_data_.gear);
   }
 
   // ----------------------- ROS publish -----------------------------//
