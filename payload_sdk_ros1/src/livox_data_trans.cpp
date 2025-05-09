@@ -21,9 +21,9 @@ Eigen::Matrix4d _livox2body_matrix;
 template<typename T>
 void readParam(std::string param_name, T &param_val, T default_val) {
   if (!nh_->param(param_name, param_val, default_val))
-    INFO_MSG_YELLOW("[DJI] | param: " << param_name << " not found, using default value: " << default_val);
+    INFO_MSG_YELLOW("[LIVOX_TRANS] | param: " << param_name << " not found, using default value: " << default_val);
   else
-    INFO_MSG_GREEN("[DJI] | param: " << param_name << " found: " << param_val);
+    INFO_MSG_GREEN("[LIVOX_TRANS] | param: " << param_name << " found: " << param_val);
 }
 
 // 模拟 livoxCallback 函数
@@ -49,7 +49,7 @@ void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
   cloud_msg.header.stamp = ros::Time::now();
   livox_pub_.publish(cloud_msg);
 
-  ROS_WARN_STREAM_THROTTLE(5.0, "[DJI]: Livox data recv process spend time : "
+  ROS_WARN_STREAM_THROTTLE(10.0, "[LIVOX_TRANS]: Livox data recv process spend time : "
           << (ros::Time::now() - cur_time).toSec() * 1e3 << " ms");
 }
 

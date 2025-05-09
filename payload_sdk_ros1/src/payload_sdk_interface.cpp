@@ -14,7 +14,9 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   cytl_cmd_heartbeat_ready_     = false;
   position_fused_ready_flag_    = false;
   dji_ctrl_first_init_          = true;
+  dji_ctrl_init_success_        = false;
   gps_ready_                    = false;
+  vel_ctrl_cmd_data_frd_        = Eigen::Vector4d::Zero();
 
   last_ctrl_cmd_time_     = ros::Time::now();
   last_pos_fused_recv_time_ = last_ctrl_cmd_time_;
@@ -84,6 +86,9 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW, freq_map[5], nullptr);
   dji_init_success =
           djiCreateSubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC, freq_map[10], nullptr);
+  dji_init_success =
+          djiCreateSubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA, freq_map[10], nullptr);
+
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_ctrl_sub, topic_livox_sub;
@@ -164,6 +169,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("rtk_vel", DJI_FC_SUBSCRIPTION_TOPIC_RTK_VELOCITY);
   djiDestroySubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW);
   djiDestroySubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC);
+  djiDestroySubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA);
   INFO_MSG("[DJI]: Destoried all subscription topics");
 
   djiStat_ = DjiFcSubscription_DeInit();
@@ -415,6 +421,15 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 //    INFO_MSG("rc data mode : " << dji_rc_data_.mode << " gear : " << dji_rc_data_.gear);
   }
 
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA,
+                                                     (uint8_t *) &dji_rc_with_flag_data_,
+                                                     sizeof(T_DjiFcSubscriptionRCWithFlagData),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get rc with flag data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_ << std::endl);
+  }else feedRCDataProcess();
+
   // ----------------------- ROS publish -----------------------------//
   ros::Time cur_t = ros::Time::now();
   publishImu60Data();
@@ -423,8 +438,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   drawVel();
   drawRangeCircles();
   drawPath();
-  ROS_INFO_STREAM_THROTTLE(2.0, "[DJI]: Main data recv process spend time : " <<
-                            (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
+//  ROS_INFO_STREAM_THROTTLE(2.0, "[DJI]: Main data recv process spend time : " <<
+//                            (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
 }
 
 // 机体坐标系 FRD (前右下)
@@ -638,6 +653,53 @@ void PayloadSdkInterface::publishImuMavrosData(){
   imu_trans_pub_.publish(imu_msg);
 }
 
+void PayloadSdkInterface::feedRCDataProcess() {
+  bool reset_flag = false;
+  if (gear_moniting_phase_ == 0){
+    if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR && cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD){
+      gear_moniting_phase_     = 1;
+      gear_change_start_time_ = ros::Time::now();
+      INFO_MSG_YELLOW("[DJI]: Gear RIGHT change detected, please hold over 3s ...");
+    }
+    if (dji_rc_data_.gear <= DJI_RC_GEAR_LEFT_THR && cur_ctrl_device_ != CTRL_DEVICE_RC) {
+      gear_moniting_phase_     = 2;
+      gear_change_start_time_ = ros::Time::now();
+      INFO_MSG_YELLOW("[DJI]: Gear LEFT change detected, please hold over 3s ...");
+    }
+  }else if (gear_moniting_phase_ == 1){
+    if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR){
+      ros::Time cur_time = ros::Time::now();
+      double duration = (cur_time - gear_change_start_time_).toSec();
+      if (duration >= 3.0) {
+        switchCtrlDevice(CTRL_DEVICE_OFFBOARD);
+        reset_flag = true;
+      }
+    }
+    else {
+      INFO_MSG_RED("[DJI]: Give up OFFBOARD change, reset to 0 phase!");
+      reset_flag = true;
+    }
+  }else if (gear_moniting_phase_ == 2){
+    if (dji_rc_data_.gear <= DJI_RC_GEAR_LEFT_THR){
+      ros::Time cur_time = ros::Time::now();
+      double duration = (cur_time - gear_change_start_time_).toSec();
+      if (duration >= 3.0) {
+        switchCtrlDevice(CTRL_DEVICE_RC);
+        reset_flag = true;
+      }
+    }else {
+      INFO_MSG_RED("[DJI]: Give up RC change, reset to 0 phase!");
+      reset_flag = true;
+    }
+  }else {
+    INFO_MSG_RED("[DJI]: Gear moniting phase error, reset to 0");
+    reset_flag = true;
+  }
+
+  if (reset_flag){
+    gear_moniting_phase_ = 0;
+  }
+}
 
 void PayloadSdkInterface::feedPositionDataProcess(){
   position_fused_data_ =
@@ -673,6 +735,7 @@ void PayloadSdkInterface::feedPositionDataProcess(){
         INFO_MSG_RED("[DJI]: init flight controller error, quit program");
         exit(1);
       }
+      dji_ctrl_init_success_ = true;
       INFO_MSG_GREEN("[DJI]: *** DJI offboard controller first init success !\n\n");
     }
   }
@@ -763,6 +826,10 @@ void PayloadSdkInterface::readParam(std::string param_name, T &param_val, T defa
  * @return bool 若切换成功返回 `true`，否则返回 `false`。
  */
 bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
+  if (!dji_ctrl_init_success_){
+    INFO_MSG_RED("[DJI]: Warning, DJI offboard controller not init yet, can't switch ctrl device!");
+    return false;
+  }
   if (device == CTRL_DEVICE_OFFBOARD){
     INFO_MSG_YELLOW("[DJI]: Warning, switch to offboard mode ... ");
     INFO_MSG_YELLOW("[DJI]: Try to get offboard control authority ... ");
@@ -778,19 +845,6 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
   }
   else if (device == CTRL_DEVICE_RC){
     INFO_MSG_YELLOW("[DJI]: Warning, switch to rc mode ... ");
-    INFO_MSG_YELLOW("[DJI]: Try to stop motion ... ");
-    djiStat_ = DjiFlightController_ExecuteEmergencyBrakeAction();
-    if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-      INFO_MSG_RED("[DJI]: Emergency brake failed, error code: " << djiStat_);
-      return false;
-    }
-    INFO_MSG_YELLOW("[DJI]: do motion recover ... ");
-    ros::Duration(2.0).sleep();
-    djiStat_ = DjiFlightController_CancelEmergencyBrakeAction();
-    if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-      INFO_MSG_RED("Cancel emergency brake action failed, error code: " << djiStat_);
-      return false;
-    }
     INFO_MSG_YELLOW("[DJI]: Try to release offboard control authority ... ");
     djiStat_ = DjiFlightController_ReleaseJoystickCtrlAuthority();
     if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){

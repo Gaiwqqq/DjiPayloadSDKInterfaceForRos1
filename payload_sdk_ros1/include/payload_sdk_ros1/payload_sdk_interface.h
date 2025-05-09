@@ -57,6 +57,9 @@
 #define INFO_MSG_YELLOW(str) do {std::cout << "\033[33m" << str << "\033[0m" << std::endl; } while(false)
 #define INFO_MSG_BLUE(str)   do {std::cout << "\033[34m" << str << "\033[0m" << std::endl; } while(false)
 
+#define DJI_RC_GEAR_RIGHT_THR 9000
+#define DJI_RC_GEAR_LEFT_THR  -9000
+
 class PayloadSdkInterface{
 public:
   enum CtrlDevice{
@@ -109,6 +112,7 @@ private:
   T_DjiFcSubscriptionRtkYaw            dji_rtk_yaw_data_{0};
 
   T_DjiFcSubscriptionRC                dji_rc_data_{0};
+  T_DjiFcSubscriptionRCWithFlagData    dji_rc_with_flag_data_{0};
 
   // ros msgs
   mavros_msgs::PositionTarget          mavros_cmd_data_recv_;
@@ -139,13 +143,16 @@ private:
 
   // flags
   bool                          is_quaternion_disp_, cytl_cmd_heartbeat_ready_, position_fused_ready_flag_;
-  bool                          is_gps_convergent_, dji_ctrl_first_init_;
+  bool                          is_gps_convergent_, dji_ctrl_first_init_, dji_ctrl_init_success_;
   CtrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
   ros::Time                     last_ctrl_cmd_time_, last_pos_fused_recv_time_;
   bool                          gps_ready_;
   string                        ctrl_cmd_type_;
+
+  ros::Time                     gear_change_start_time_;
+  unsigned int                  gear_moniting_phase_{0};   // 0 -> 1 -> 2 -> 0
 
   // throttles
   double                        _gps_accuracy_thres;
@@ -164,6 +171,7 @@ private:
   void feedGPSDetailsDataProcess();
   void feedVelDataProcess();
   void feedQuaternionDataProcess();
+  void feedRCDataProcess();
 
   void publishImu60Data();
   void publishOdomData();
