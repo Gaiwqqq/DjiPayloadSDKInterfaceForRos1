@@ -60,6 +60,21 @@
 #define DJI_RC_GEAR_RIGHT_THR 9000
 #define DJI_RC_GEAR_LEFT_THR  -9000
 
+/*
+ * @ 关于坐标系的说明：
+ * 1. Position (DJI 坐标系为经纬高)
+ *    1.1. LLA转换XYZ后的坐标系为东北天，与显示坐标系西北天不符，转换后需要变为 -y
+ *    1.2  LLA与60协议相同，无需转换 （经纬高）
+ * 2. Quaternion ()
+ *    2.1 DJI坐标系的pitch和 yaw与显示坐标系反向，需要变为-pitch & -yaw （todo 未验证）
+ *    2.2 (pitch, roll, yaw)定义与60协议相同，无需转换  (前左上坐标系， 顺时针为+， 北向yaw=0)
+ * 3. Acceleration (DJI 坐标系为todo)
+ *    3.1 todo 未验证
+ * 4. Velocity (DJI 坐标系为NEU)
+ *    4.1 mavros 坐标系为 NED
+ *    4.2 60 body-vel 坐标系为东北天, 无需转换
+ * */
+
 class PayloadSdkInterface{
 public:
   enum CtrlDevice{
@@ -166,6 +181,7 @@ private:
   void offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg);
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
   void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr& msg);
+  void fullMotionStop();
 
   void feedPositionDataProcess();
   void feedGPSDetailsDataProcess();

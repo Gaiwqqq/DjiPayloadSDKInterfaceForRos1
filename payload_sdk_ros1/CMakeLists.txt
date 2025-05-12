@@ -76,6 +76,9 @@ find_package(catkin REQUIRED COMPONENTS
     message_generation
     tf2_ros
     pcl_conversions
+    flyctrl
+    livox_ros_driver
+    com_package
 )
 
 add_message_files(

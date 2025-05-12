@@ -89,12 +89,11 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_init_success =
           djiCreateSubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA, freq_map[10], nullptr);
 
-
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_ctrl_sub, topic_livox_sub;
   bool livox_trans_enable;
   readParam<std::string>("dji/topic_nav_pub", topic_nav_pub, "/mavros/nav_msgs");
-  readParam<std::string>("dji/topic_ctrl_sub", topic_ctrl_sub, "/mavros/setpoint_raw/local");
+  readParam<std::string>("dji/topic_ctrl_sub", topic_ctrl_sub, "/flyctrl_send");
   readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
   readParam<double>("dji/data_loop_rate", _data_loop_rate, 10.0);
   readParam<string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
@@ -130,8 +129,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     dji_flyctrl_pub_timer_ = nh_.createTimer(ros::Duration(1.0 / 50.0), &PayloadSdkInterface::djiFlyCtrlPubCallback, this);
     dji_flyctrl_pub_timer_.stop();
     INFO_MSG_GREEN("[DJI] | Payload SDK init success, do topic init success !");
-    INFO_MSG_GREEN("[DJI] | Subscribe to topics: quaternion, velocity, gps_position, pos_fusion");
-    INFO_MSG_GREEN("[DJI] | data publish max frequency : " << 50 << " Hz");
+    INFO_MSG_GREEN("[DJI] | data publish max frequency : " << static_cast<int>(_data_loop_rate) << " Hz");
   }else{
     INFO_MSG_RED("[DJI] | Payload SDK init failed, do topic init failed !");
     INFO_MSG_RED("[DJI] | Do NOT launch timer! Quit program");
@@ -443,7 +441,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   publishOdomData();
   publishImuMavrosData();
   drawVel();
-  drawRangeCircles();
+//  drawRangeCircles();
   drawPath();
   ROS_INFO_STREAM_THROTTLE(5.0, "[DJI]: Main data recv process spend time : " <<
                             (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
@@ -452,21 +450,22 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
 // 机体坐标系 FRD (前右下)
 // 大地坐标系 NED (北东地)
 void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
+  if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
+  if (cur_ctrl_mode_ == NOT_SET) return ;
+
   ros::Time cur_time = ros::Time::now();
   double time_duration = (cur_time - last_ctrl_cmd_time_).toSec();
   if (time_duration > 0.5 && cytl_cmd_heartbeat_ready_){
     INFO_MSG_RED("\n ***[DJI]: Warning, ctrl cmd data not received in 500ms, lost heartbeat !");
     cytl_cmd_heartbeat_ready_ = false;
     vel_ctrl_cmd_data_frd_ = Eigen::Vector4d::Zero();
+    fullMotionStop();
   }
   else if (time_duration < 0.5 && !cytl_cmd_heartbeat_ready_){
     INFO_MSG_GREEN("\n ***[DJI]: ctrl cmd data heartbeat recovered !");
     cytl_cmd_heartbeat_ready_ = true;
   }
-
   if (!cytl_cmd_heartbeat_ready_) return;
-  if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
-  if (cur_ctrl_mode_ == NOT_SET) return ;
 
   if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
     if (ctrl_cmd_type_ == "mavros"){
@@ -483,6 +482,16 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
              static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.w())};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
+}
+
+void PayloadSdkInterface::fullMotionStop() {
+  if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
+  if (cur_ctrl_mode_ == NOT_SET) return ;
+  if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
+    T_DjiFlightControllerJoystickCommand joystick_cmd = {0.0, 0.0, 0.0, 0.0};
+    DjiFlightController_ExecuteJoystickAction(joystick_cmd);
+  }
+  INFO_MSG_YELLOW("***[DJI]: Do Motion fully stop !");
 }
 
 void PayloadSdkInterface::livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
@@ -576,22 +585,25 @@ void PayloadSdkInterface::publishImu60Data(){
   imu60_msg.Vy        = static_cast<float>(velocity_data_neu_.y());
   imu60_msg.Vz        = static_cast<float>(velocity_data_neu_.z());
 
-  double yaw_rad = quaternion_data_.z() / 180.0 * M_PI;
-  yaw_rad = M_PI / 2.0 - yaw_rad;
-  if (yaw_rad < 0) yaw_rad = M_PI * 2.0 + yaw_rad;
-  double yaw_fix = yaw_rad * 180 / M_PI;
+  Eigen::Vector3d quaternion_data_trans = quaternion_data_;
+  if (quaternion_data_trans(2) < 0.0)
+    quaternion_data_trans(2)= 360.0 + quaternion_data_trans(2);
 
-  imu60_msg.Pitch     = static_cast<float>(quaternion_data_.x());
-  imu60_msg.Roll      = static_cast<float>(quaternion_data_.y());
-  imu60_msg.Yaw       = static_cast<float>(yaw_fix);
+  imu60_msg.Pitch     = static_cast<float>(quaternion_data_trans.x());
+  imu60_msg.Roll      = static_cast<float>(quaternion_data_trans.y());
+  imu60_msg.Yaw       = static_cast<float>(quaternion_data_trans.z());
 
-  imu60_msg.RollRate  = static_cast<float>(angular_rate_fused_data_.x());
-  imu60_msg.PitchRate = static_cast<float>(angular_rate_fused_data_.y());
-  imu60_msg.YawRate   = static_cast<float>(angular_rate_fused_data_.z());
+  Eigen::Vector3d angular_rate_fused_data_trans = angular_rate_fused_data_ * 180.0 / M_PI;
+  imu60_msg.RollRate  = static_cast<float>(angular_rate_fused_data_trans.x());
+  imu60_msg.PitchRate = static_cast<float>(angular_rate_fused_data_trans.y());
+  imu60_msg.YawRate   = static_cast<float>(angular_rate_fused_data_trans.z());
 
-  imu60_msg.Ax        = static_cast<float>(acc_raw_data_.x());
-  imu60_msg.Ay        = static_cast<float>(-acc_raw_data_.y());
-  imu60_msg.Az        = static_cast<float>(-acc_raw_data_.z());
+  Eigen::Vector3d acc_raw_data_trans = acc_raw_data_ * 10.0;
+  imu60_msg.Ax        = static_cast<float>(acc_raw_data_trans.x());
+  imu60_msg.Ay        = static_cast<float>(acc_raw_data_trans.y());
+  imu60_msg.Az        = static_cast<float>(acc_raw_data_trans.z());
+
+//  INFO_MSG("Ax: "<< imu60_msg.Ax << " Ay: " << imu60_msg.Ay << " Az: " << imu60_msg.Az);
 
   imu60_msg.SensorStatus = 25;
   imu60_msg.WorkStatus   = 8;
@@ -602,26 +614,17 @@ void PayloadSdkInterface::publishImu60Data(){
 
 void PayloadSdkInterface::publishOdomData(){
   if (!gps_ready_) return ;
-//  nav_msgs::Odometry odom;
-//  odom.header.stamp            = ros::Time::now();
-//  odom.header.frame_id         = "world";
-//  odom.pose.pose.position.x    = xyz_pos_neu_.x();
-//  odom.pose.pose.position.y    = xyz_pos_neu_.y();
-//  odom.pose.pose.position.z    = xyz_pos_neu_.z();
-//
-//  odom.pose.pose.orientation.x = quaternion_world_.x();
-//  odom.pose.pose.orientation.y = quaternion_world_.y();
-//  odom.pose.pose.orientation.z = quaternion_world_.z();
-//  odom.pose.pose.orientation.w = quaternion_world_.w();
-//
-//  odom.twist.twist.linear.x    = velocity_data_frd_.x();
-//  odom.twist.twist.linear.y    = velocity_data_frd_.y();
-//  odom.twist.twist.linear.z    = velocity_data_frd_.z();
-//  odom.twist.twist.angular.x   = angular_rate_fused_data_.x();
-//  odom.twist.twist.angular.y   = angular_rate_fused_data_.y();
-//  odom.twist.twist.angular.z   = angular_rate_fused_data_.z();
-//
-//  odom_trans_pub_.publish(odom);
+  nav_msgs::Odometry odom;
+  odom.header.stamp            = ros::Time::now();
+  odom.header.frame_id         = "world";
+  odom.pose.pose.position.x    = xyz_pos_neu_.x();
+  odom.pose.pose.position.y    = xyz_pos_neu_.y();
+  odom.pose.pose.position.z    = xyz_pos_neu_.z();
+  odom.pose.pose.orientation.x = quaternion_world_.x();
+  odom.pose.pose.orientation.y = quaternion_world_.y();
+  odom.pose.pose.orientation.z = quaternion_world_.z();
+  odom.pose.pose.orientation.w = quaternion_world_.w();
+  odom_trans_pub_.publish(odom);
 
   geometry_msgs::TransformStamped tf_djibody2world;
   tf_djibody2world.header.stamp = ros::Time::now();
@@ -682,12 +685,12 @@ void PayloadSdkInterface::feedRCDataProcess() {
     if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR && cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD){
       gear_moniting_phase_     = 1;
       gear_change_start_time_ = ros::Time::now();
-      INFO_MSG("[DJI]: Gear RIGHT change detected, please hold over 3s ...");
+      INFO_MSG("\n[DJI]: Gear RIGHT change detected, please hold over 3s ...\n");
     }
     if (dji_rc_data_.gear <= DJI_RC_GEAR_LEFT_THR && cur_ctrl_device_ != CTRL_DEVICE_RC) {
       gear_moniting_phase_     = 2;
       gear_change_start_time_ = ros::Time::now();
-      INFO_MSG("[DJI]: Gear LEFT change detected, please hold over 3s ...");
+      INFO_MSG("\n[DJI]: Gear LEFT change detected, please hold over 3s ...\n");
     }
   }else if (gear_moniting_phase_ == 1){
     if (dji_rc_data_.gear >= DJI_RC_GEAR_RIGHT_THR){
@@ -788,7 +791,6 @@ void PayloadSdkInterface::feedGPSDetailsDataProcess(){
 }
 
 void PayloadSdkInterface::feedVelDataProcess() {
-  // 已知无人机姿态，将速度从北东天坐标系转换为机体FLU坐标系
   velocity_data_neu_     = Eigen::Vector3d (dji_velocity_data_.data.x, dji_velocity_data_.data.y, dji_velocity_data_.data.z);
   velocity_data_neu_vis_ = Eigen::Vector3d (dji_velocity_data_.data.x, -dji_velocity_data_.data.y, dji_velocity_data_.data.z);
   velocity_data_frd_     = quaternion_world_ * velocity_data_neu_;
