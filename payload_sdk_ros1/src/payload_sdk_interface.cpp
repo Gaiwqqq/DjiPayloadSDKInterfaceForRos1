@@ -16,7 +16,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_ctrl_first_init_          = true;
   dji_ctrl_init_success_        = false;
   gps_ready_                    = false;
-  vel_ctrl_cmd_data_frd_        = Eigen::Vector4d::Zero();
+  vel_ctrl_cmd_data_frd_raw_        = Eigen::Vector4d::Zero();
 
   last_ctrl_cmd_time_     = ros::Time::now();
   last_pos_fused_recv_time_ = last_ctrl_cmd_time_;
@@ -96,10 +96,12 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   readParam<std::string>("dji/topic_ctrl_sub", topic_ctrl_sub, "/flyctrl_send");
   readParam<double>("dji/gps_accuracy_threshold", _gps_accuracy_thres, 2.0);
   readParam<double>("dji/data_loop_rate", _data_loop_rate, 10.0);
-  readParam<string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
-  readParam<string>("dji/livox_sub_topic", topic_livox_sub, "/livox/lidar");
+  readParam<std::string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
+  readParam<std::string>("dji/livox_sub_topic", topic_livox_sub, "/livox/lidar");
   readParam<bool>("dji/livox_trans_enable", livox_trans_enable, false);
-
+  readParam<bool>("dji/vel_ctrl_smooth", vel_ctrl_smooth_flag_, true);
+  readParam<double>("dji/vel_ctrl_acc_limit", _max_ctrl_acc, 2.0);
+  readParam<double>("dji/vel_ctrl_yaw_dot_dot_limit", _max_ctrl_yaw_dot_dot, 30.0);
 
   if (ctrl_cmd_type_ == "mavros")
     ctrl_cmd_sub_ = nh_.subscribe(topic_ctrl_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
@@ -440,8 +442,8 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   publishImu60Data();
   publishOdomData();
   publishImuMavrosData();
+
   drawVel();
-//  drawRangeCircles();
   drawPath();
   ROS_INFO_STREAM_THROTTLE(5.0, "[DJI]: Main data recv process spend time : " <<
                             (ros::Time::now() - cur_t).toSec() * 1e3 << " ms");
@@ -458,11 +460,12 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
   if (time_duration > 0.5 && cytl_cmd_heartbeat_ready_){
     INFO_MSG_RED("\n ***[DJI]: Warning, ctrl cmd data not received in 500ms, lost heartbeat !");
     cytl_cmd_heartbeat_ready_ = false;
-    vel_ctrl_cmd_data_frd_ = Eigen::Vector4d::Zero();
+    vel_ctrl_cmd_data_frd_raw_ = Eigen::Vector4d::Zero();
     fullMotionStop();
   }
   else if (time_duration < 0.5 && !cytl_cmd_heartbeat_ready_){
     INFO_MSG_GREEN("\n ***[DJI]: ctrl cmd data heartbeat recovered !");
+    last_dji_cmd_pub_time_    = cur_time;
     cytl_cmd_heartbeat_ready_ = true;
   }
   if (!cytl_cmd_heartbeat_ready_) return;
@@ -475,11 +478,12 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
         return;
       }
     }
+    velCtrlSmooth(cur_time);
     T_DjiFlightControllerJoystickCommand joystick_cmd =
-            {static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.x()),
-             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.y()),
-             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.z()),
-             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_.w())};
+            {static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.x()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.y()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.z()),
+             static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.w())};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
 }
@@ -488,6 +492,7 @@ void PayloadSdkInterface::fullMotionStop() {
   if (cur_ctrl_device_ != CTRL_DEVICE_OFFBOARD) return;
   if (cur_ctrl_mode_ == NOT_SET) return ;
   if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
+    vel_ctrl_cmd_data_frd_raw_ = vel_ctrl_cmd_data_frd_fix_ = Eigen::Vector4d::Zero();
     T_DjiFlightControllerJoystickCommand joystick_cmd = {0.0, 0.0, 0.0, 0.0};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
   }
@@ -525,19 +530,46 @@ void PayloadSdkInterface::livoxCallback(const livox_ros_driver::CustomMsg::Const
 void PayloadSdkInterface::mavrosCmdCallback(const mavros_msgs::PositionTarget::ConstPtr& msg){
   last_pos_fused_recv_time_ = ros::Time::now();
   mavros_cmd_data_recv_ = *msg;
-  vel_ctrl_cmd_data_frd_[0] =  msg->velocity.x;
-  vel_ctrl_cmd_data_frd_[1] = -msg->velocity.y;
-  vel_ctrl_cmd_data_frd_[2] = -msg->velocity.z;
-  vel_ctrl_cmd_data_frd_[3] =  msg->yaw_rate / 180.0 * M_PI;
+  vel_ctrl_cmd_data_frd_raw_[0] =  msg->velocity.x;
+  vel_ctrl_cmd_data_frd_raw_[1] = -msg->velocity.y;
+  vel_ctrl_cmd_data_frd_raw_[2] = -msg->velocity.z;
+  vel_ctrl_cmd_data_frd_raw_[3] = msg->yaw_rate / 180.0 * M_PI;
 }
 
 void PayloadSdkInterface::custom60CmdCallback(const flyctrl::flyctrl_send::ConstPtr &msg) {
   last_ctrl_cmd_time_ = ros::Time::now();
   custom_60_cmd_data_recv_ = *msg;
-  vel_ctrl_cmd_data_frd_[0] =  msg->u_sp;
-  vel_ctrl_cmd_data_frd_[1] =  msg->v_sp;
-  vel_ctrl_cmd_data_frd_[2] = -msg->w_sp;
-  vel_ctrl_cmd_data_frd_[3] =  msg->r_sp / 180.0 * M_PI;
+  vel_ctrl_cmd_data_frd_raw_[0] =  msg->u_sp;
+  vel_ctrl_cmd_data_frd_raw_[1] =  msg->v_sp;
+  vel_ctrl_cmd_data_frd_raw_[2] = -msg->w_sp;
+  vel_ctrl_cmd_data_frd_raw_[3] = -msg->r_sp; // dji : deg/s 逆时针方向为正
+}
+
+void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
+  if (!vel_ctrl_smooth_flag_){
+    vel_ctrl_cmd_data_frd_fix_ = vel_ctrl_cmd_data_frd_raw_;
+    return;
+  }
+
+  // acc limit
+  Eigen::Vector4d last_cmd  = vel_ctrl_cmd_data_frd_fix_;
+  Eigen::Vector3d delta_vel = vel_ctrl_cmd_data_frd_raw_.head(3) - last_cmd.head(3);
+  double max_delta_vel      = _max_ctrl_acc * (cur_t - last_ctrl_cmd_time_).toSec();
+  if (delta_vel.norm() > max_delta_vel) {
+    delta_vel.normalize();
+    delta_vel *= max_delta_vel;
+    vel_ctrl_cmd_data_frd_fix_.head(3) = last_cmd.head(3) + delta_vel;
+  } else
+    vel_ctrl_cmd_data_frd_fix_.head(3) = vel_ctrl_cmd_data_frd_raw_.head(3);
+
+  // yaw rate limit
+  double delta_yaw_rate = vel_ctrl_cmd_data_frd_raw_[3] - last_cmd[3];
+  double max_delta_yaw_rate = _max_ctrl_yaw_dot_dot * (cur_t - last_ctrl_cmd_time_).toSec();
+  if (fabs(delta_yaw_rate) > max_delta_yaw_rate) {
+    delta_yaw_rate = delta_yaw_rate > 0 ? max_delta_yaw_rate : -max_delta_yaw_rate;
+    vel_ctrl_cmd_data_frd_fix_[3] = last_cmd[3] + delta_yaw_rate;
+  } else
+    vel_ctrl_cmd_data_frd_fix_[3] = vel_ctrl_cmd_data_frd_raw_[3];
 }
 
 void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg){

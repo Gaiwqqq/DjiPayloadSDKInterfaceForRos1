@@ -150,7 +150,7 @@ private:
   double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
 
   // ctrl cmd data
-  Eigen::Vector4d              vel_ctrl_cmd_data_frd_;   // (vx, vy, vz, yaw_rate) -> FRD coordinate
+  Eigen::Vector4d              vel_ctrl_cmd_data_frd_raw_, vel_ctrl_cmd_data_frd_fix_;   // (vx, vy, vz, yaw_rate) -> FRD coordinate
   nav_msgs::Path               path_vis_data_;
 
   // counters
@@ -163,16 +163,20 @@ private:
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
   ros::Time                     last_ctrl_cmd_time_, last_pos_fused_recv_time_;
+  ros::Time                     last_dji_cmd_pub_time_;
   bool                          gps_ready_;
   string                        ctrl_cmd_type_;
 
   ros::Time                     gear_change_start_time_;
   unsigned int                  gear_moniting_phase_{0};   // 0 -> 1 -> 2 -> 0
 
+  bool                          vel_ctrl_smooth_flag_;
+
   // throttles
   double                        _gps_accuracy_thres;
   double                        _data_loop_rate;
   Eigen::Matrix4d               _livox2body_matrix;
+  double                        _max_ctrl_acc, _max_ctrl_yaw_dot_dot;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
@@ -182,6 +186,7 @@ private:
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
   void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr& msg);
   void fullMotionStop();
+  void velCtrlSmooth(const ros::Time &cur_t);
 
   void feedPositionDataProcess();
   void feedGPSDetailsDataProcess();

@@ -194,17 +194,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -1.0656027793884277
-        Y: -0.4038815498352051
-        Z: -9.5367431640625e-07
+        X: -2.173610210418701
+        Y: 0.3368576765060425
+        Z: -2.384185791015625e-06
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.10000000149011612
-      Pitch: 0.4665963351726532
+      Pitch: 0.531596302986145
       Target Frame: dji_body
-      Yaw: 2.915700912475586
+      Yaw: 2.920700788497925
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 10.207877159118652
@@ -242,5 +242,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1398
-  X: 901
-  Y: 231
+  X: 1013
+  Y: 169
