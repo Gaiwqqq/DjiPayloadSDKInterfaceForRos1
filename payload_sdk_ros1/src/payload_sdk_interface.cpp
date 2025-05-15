@@ -11,12 +11,13 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   is_quaternion_disp_           = false;
   is_gps_convergent_            = false;
   cur_ctrl_device_              = CTRL_DEVICE_RC;
-  cytl_cmd_heartbeat_ready_     = false;
+  ctrl_cmd_heartbeat_ready_     = false;
   position_fused_ready_flag_    = false;
   dji_ctrl_first_init_          = true;
   dji_ctrl_init_success_        = false;
   gps_ready_                    = false;
-  vel_ctrl_cmd_data_frd_raw_        = Eigen::Vector4d::Zero();
+  vel_ctrl_cmd_data_frd_raw_    = Eigen::Vector4d::Zero();
+  vel_ctrl_cmd_data_frd_fix_    = Eigen::Vector4d::Zero();
 
   last_ctrl_cmd_time_     = ros::Time::now();
   last_pos_fused_recv_time_ = last_ctrl_cmd_time_;
@@ -39,6 +40,11 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
     INFO_MSG_RED("[DJI]: init data subscription module error, quit program");
     return;
   }
+//  djiStat_ = DjiWidget_Init();
+//  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//    INFO_MSG_RED("[DJI]: init widget module error, quit program");
+//    return;
+//  }
 
   std::map<int, E_DjiDataSubscriptionTopicFreq> freq_map;
   freq_map[400] = DJI_DATA_SUBSCRIPTION_TOPIC_400_HZ;
@@ -50,6 +56,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   freq_map[1]   = DJI_DATA_SUBSCRIPTION_TOPIC_1_HZ;
 
   bool dji_init_success;
+  dji_init_success =
+          djiCreateSubscription("height_fusion", DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION, freq_map[50], nullptr);
   dji_init_success =
           djiCreateSubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY, freq_map[10], nullptr);
   dji_init_success =
@@ -117,6 +125,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   imu_trans_pub_       = nh_.advertise<sensor_msgs::Imu>("/dji/imu_trans", 2);
   vis_pub_             = nh_.advertise<visualization_msgs::Marker>("/dji/vis", 2);
   path_vis_pub_        = nh_.advertise<nav_msgs::Path>("/dji/path_vis", 2);
+  mimicking_flight_60_height_pub_ = nh.advertise<std_msgs::Float64>("/temp_radio", 5);
+  vel_ctrl_smooth_data_pub_       = nh_.advertise<geometry_msgs::Twist>("/vel_ctrl_smooth_data", 5);
 
   if (livox_trans_enable){
     livoxTransInit();
@@ -152,6 +162,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
     USER_LOG_ERROR("Deinit flight controller module failed, error code:0x%08llX", djiStat_);
   }
 
+  djiDestroySubscription("height_fusion", DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION);
   djiDestroySubscription("acc_body", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_BODY);
   djiDestroySubscription("acc_ground", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_GROUND);
   djiDestroySubscription("acc_raw", DJI_FC_SUBSCRIPTION_TOPIC_ACCELERATION_RAW);
@@ -218,6 +229,16 @@ void PayloadSdkInterface::livoxTransInit() {
 }
 
 void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
+  // height fusioned
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_HEIGHT_FUSION,
+                                                     (uint8_t *) &dji_height_fusion_data_,
+                                                     sizeof(T_DjiFcSubscriptionHeightFusion),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS){
+    INFO_MSG_RED("[DJI]: get height fusion data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }
+
   // Position fused
   djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_FUSED,
                                                      (uint8_t *) &dji_position_fused_data_,
@@ -457,18 +478,19 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
 
   ros::Time cur_time = ros::Time::now();
   double time_duration = (cur_time - last_ctrl_cmd_time_).toSec();
-  if (time_duration > 0.5 && cytl_cmd_heartbeat_ready_){
+  if (time_duration > 0.5 && ctrl_cmd_heartbeat_ready_){
     INFO_MSG_RED("\n ***[DJI]: Warning, ctrl cmd data not received in 500ms, lost heartbeat !");
-    cytl_cmd_heartbeat_ready_ = false;
+    ctrl_cmd_heartbeat_ready_ = false;
     vel_ctrl_cmd_data_frd_raw_ = Eigen::Vector4d::Zero();
+    vel_ctrl_cmd_data_frd_fix_ = Eigen::Vector4d::Zero();
     fullMotionStop();
   }
-  else if (time_duration < 0.5 && !cytl_cmd_heartbeat_ready_){
+  else if (time_duration < 0.5 && !ctrl_cmd_heartbeat_ready_){
     INFO_MSG_GREEN("\n ***[DJI]: ctrl cmd data heartbeat recovered !");
     last_dji_cmd_pub_time_    = cur_time;
-    cytl_cmd_heartbeat_ready_ = true;
+    ctrl_cmd_heartbeat_ready_ = true;
   }
-  if (!cytl_cmd_heartbeat_ready_) return;
+  if (!ctrl_cmd_heartbeat_ready_) return;
 
   if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
     if (ctrl_cmd_type_ == "mavros"){
@@ -485,6 +507,15 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
              static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.z()),
              static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.w())};
     DjiFlightController_ExecuteJoystickAction(joystick_cmd);
+    last_dji_cmd_pub_time_ = cur_time;
+
+    // smooth data pub
+    geometry_msgs::Twist vel_ctrl_smooth_data;
+    vel_ctrl_smooth_data.linear.x  = vel_ctrl_cmd_data_frd_fix_.x();
+    vel_ctrl_smooth_data.linear.y  = vel_ctrl_cmd_data_frd_fix_.y();
+    vel_ctrl_smooth_data.linear.z  = vel_ctrl_cmd_data_frd_fix_.z();
+    vel_ctrl_smooth_data.angular.x = vel_ctrl_cmd_data_frd_fix_.w();
+    vel_ctrl_smooth_data_pub_.publish(vel_ctrl_smooth_data);
   }
 }
 
@@ -553,28 +584,28 @@ void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
 
   // acc limit
   Eigen::Vector4d last_cmd  = vel_ctrl_cmd_data_frd_fix_;
-  Eigen::Vector3d delta_vel = vel_ctrl_cmd_data_frd_raw_.head(3) - last_cmd.head(3);
-  double max_delta_vel      = _max_ctrl_acc * (cur_t - last_ctrl_cmd_time_).toSec();
+  Eigen::Vector3d delta_vel = vel_ctrl_cmd_data_frd_raw_.block<3, 1>(0, 0) - last_cmd.block<3, 1>(0, 0);
+  double max_delta_vel      = _max_ctrl_acc * (cur_t - last_dji_cmd_pub_time_).toSec();
   if (delta_vel.norm() > max_delta_vel) {
     delta_vel.normalize();
     delta_vel *= max_delta_vel;
-    vel_ctrl_cmd_data_frd_fix_.head(3) = last_cmd.head(3) + delta_vel;
+    vel_ctrl_cmd_data_frd_fix_.block<3, 1>(0, 0) = last_cmd.block<3, 1>(0, 0) + delta_vel;
   } else
     vel_ctrl_cmd_data_frd_fix_.head(3) = vel_ctrl_cmd_data_frd_raw_.head(3);
 
   // yaw rate limit
-  double delta_yaw_rate = vel_ctrl_cmd_data_frd_raw_[3] - last_cmd[3];
-  double max_delta_yaw_rate = _max_ctrl_yaw_dot_dot * (cur_t - last_ctrl_cmd_time_).toSec();
-  if (fabs(delta_yaw_rate) > max_delta_yaw_rate) {
-    delta_yaw_rate = delta_yaw_rate > 0 ? max_delta_yaw_rate : -max_delta_yaw_rate;
-    vel_ctrl_cmd_data_frd_fix_[3] = last_cmd[3] + delta_yaw_rate;
+  double delta_yaw_dot = vel_ctrl_cmd_data_frd_raw_[3] - last_cmd[3];
+  double max_delta_yaw_rate = _max_ctrl_yaw_dot_dot * (cur_t - last_dji_cmd_pub_time_).toSec();
+  if (fabs(delta_yaw_dot) > max_delta_yaw_rate) {
+    delta_yaw_dot = delta_yaw_dot > 0 ? max_delta_yaw_rate : -max_delta_yaw_rate;
+    vel_ctrl_cmd_data_frd_fix_[3] = last_cmd[3] + delta_yaw_dot;
   } else
     vel_ctrl_cmd_data_frd_fix_[3] = vel_ctrl_cmd_data_frd_raw_[3];
 }
 
 void PayloadSdkInterface::offboardSwitchCallback(const std_msgs::Int8::ConstPtr& msg){
   std_msgs::Int8 mode = *msg;
-  if (!gps_ready_ || !position_fused_ready_flag_ || !cytl_cmd_heartbeat_ready_){
+  if (!gps_ready_ || !position_fused_ready_flag_){
     INFO_MSG_RED("[DJI]: Not ready, Can't switch control device !");
     return ;
   }
@@ -642,6 +673,11 @@ void PayloadSdkInterface::publishImu60Data(){
   imu60_msg.NaviStatus   = 9;
 
   imu_60_pub_.publish(imu60_msg);
+
+  // publish 60 height data (based on true ground × based on height fusioned √)
+  std_msgs::Float64 height_msg;
+  height_msg.data = static_cast<double>(xyz_pos_neu_.z());
+  mimicking_flight_60_height_pub_.publish(height_msg);
 }
 
 void PayloadSdkInterface::publishOdomData(){
@@ -911,6 +947,11 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
     }
     cur_ctrl_device_ = CTRL_DEVICE_OFFBOARD;
     INFO_MSG_GREEN("[DJI]: Obtain joystick control authority success, switch to offboard mode success !");
+    INFO_MSG_CYAN("|  _  ||  ___||  ___|| ___ \\|  _  | / _ \\ | ___ \\|  _  \\ \n"
+                  "| | | || |_   | |_   | |_/ /| | | |/ /_\\ \\| |_/ /| | | | \n"
+                  "| | | ||  _|  |  _|  | ___ \\| | | ||  _  ||    / | | | | \n"
+                  "\\ \\_/ /| |    | |    | |_/ /\\ \\_/ /| | | || |\\ \\ | |/ /  \n"
+                  " \\___/ \\_|    \\_|    \\____/  \\___/ \\_| |_/\\_| \\_||___/   ");
   }
   else if (device == CTRL_DEVICE_RC){
     INFO_MSG_YELLOW("[DJI]: Warning, switch to rc mode ... ");
@@ -923,6 +964,11 @@ bool PayloadSdkInterface::switchCtrlDevice(CtrlDevice device){
     }
     DjiTest_WidgetLogAppend("[DJI]: Switch to rc mode success !");
     INFO_MSG_GREEN("[DJI]: Release joystick control authority success, switch to rc mode success!");
+    INFO_MSG_CYAN("| ___ \\/  __ \\ /  __ \\|_   _|| ___ \\| |    \n"
+                   "| |_/ /| /  \\/ | /  \\/  | |  | |_/ /| |    \n"
+                   "|    / | |     | |      | |  |    / | |    \n"
+                   "| |\\ \\ | \\__/\\ | \\__/\\  | |  | |\\ \\ | |____\n"
+                   "\\_| \\_| \\____/  \\____/  \\_/  \\_| \\_|\\_____/");
     dji_flyctrl_pub_timer_.stop();
     cur_ctrl_device_ = CTRL_DEVICE_RC;
   }

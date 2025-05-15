@@ -46,6 +46,8 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <livox_ros_driver/CustomMsg.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Float64.h>
+#include <geometry_msgs/Twist.h>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -56,6 +58,8 @@
 #define INFO_MSG_GREEN(str)  do {std::cout << "\033[32m" << str << "\033[0m" << std::endl; } while(false)
 #define INFO_MSG_YELLOW(str) do {std::cout << "\033[33m" << str << "\033[0m" << std::endl; } while(false)
 #define INFO_MSG_BLUE(str)   do {std::cout << "\033[34m" << str << "\033[0m" << std::endl; } while(false)
+#define INFO_MSG_PURPLE(str) do {std::cout << "\033[35m" << str << "\033[0m" << std::endl; } while(false)
+#define INFO_MSG_CYAN(str)   do {std::cout << "\033[36m" << str << "\033[0m" << std::endl; } while(false)
 
 #define DJI_RC_GEAR_RIGHT_THR 9000
 #define DJI_RC_GEAR_LEFT_THR  -9000
@@ -96,10 +100,13 @@ private:
   ros::NodeHandle nh_;
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber ctrl_cmd_sub_, offboard_switch_sub_, custom_60_cmd_sub_;
-  ros::Publisher  imu_60_pub_, mimicking_flight_hight_pub_, odom_trans_pub_, imu_trans_pub_;
+  ros::Publisher  imu_60_pub_, mimicking_flight_60_height_pub_, odom_trans_pub_, imu_trans_pub_;
   ros::Publisher  vis_pub_, path_vis_pub_;
   ros::Subscriber livox_sub_;
   ros::Publisher  livox_pub_;
+
+  // debug pub
+  ros::Publisher  vel_ctrl_smooth_data_pub_;
 
   tf2_ros::TransformBroadcaster tf_broadcaster_;
 
@@ -120,6 +127,7 @@ private:
   T_DjiFcSubscriptionAngularRateFusioned dji_angular_rate_fused_data_{0};
   T_DjiFcSubscriptionGpsDetails        dji_gps_details_data_{0};
   T_DjiFcSubscriptionControlDevice     dji_ctrl_device_data_{0};
+  T_DjiFcSubscriptionHeightFusion      dji_height_fusion_data_{0};
 
   T_DjiFcSubscriptionRTKConnectStatus  dji_rtk_connection_stat_data_{0};
   T_DjiFcSubscriptionRtkPosition       dji_rtk_pos_data_{0};
@@ -157,7 +165,7 @@ private:
   uint32_t                      quaternion_recv_counter_;
 
   // flags
-  bool                          is_quaternion_disp_, cytl_cmd_heartbeat_ready_, position_fused_ready_flag_;
+  bool                          is_quaternion_disp_, ctrl_cmd_heartbeat_ready_, position_fused_ready_flag_;
   bool                          is_gps_convergent_, dji_ctrl_first_init_, dji_ctrl_init_success_;
   CtrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
