@@ -107,9 +107,10 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   readParam<std::string>("dji/cmd_type", ctrl_cmd_type_, "mavros");
   readParam<std::string>("dji/livox_sub_topic", topic_livox_sub, "/livox/lidar");
   readParam<bool>("dji/livox_trans_enable", livox_trans_enable, false);
-  readParam<bool>("dji/vel_ctrl_smooth", vel_ctrl_smooth_flag_, true);
+  readParam<bool>("dji/enable_vel_ctrl_smooth", _enable_vel_ctrl_smooth, true);
   readParam<double>("dji/vel_ctrl_acc_limit", _max_ctrl_acc, 2.0);
   readParam<double>("dji/vel_ctrl_yaw_dot_dot_limit", _max_ctrl_yaw_dot_dot, 30.0);
+  readParam<bool>("dji/enable_livox_frame_tf_pub", _enable_livox_frame_tf_pub, true);
 
   if (ctrl_cmd_type_ == "mavros")
     ctrl_cmd_sub_ = nh_.subscribe(topic_ctrl_sub, 2, &PayloadSdkInterface::mavrosCmdCallback,
@@ -577,7 +578,7 @@ void PayloadSdkInterface::custom60CmdCallback(const flyctrl::flyctrl_send::Const
 }
 
 void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
-  if (!vel_ctrl_smooth_flag_){
+  if (!_enable_vel_ctrl_smooth){
     vel_ctrl_cmd_data_frd_fix_ = vel_ctrl_cmd_data_frd_raw_;
     return;
   }
@@ -707,22 +708,24 @@ void PayloadSdkInterface::publishOdomData(){
   tf_djibody2world.transform.translation.z = xyz_pos_neu_.z();
   tf_broadcaster_.sendTransform(tf_djibody2world);
 
-  geometry_msgs::TransformStamped tf_livox2world;
-  tf_livox2world.header.stamp    = tf_djibody2world.header.stamp;
-  tf_livox2world.header.frame_id = "world";
-  tf_livox2world.child_frame_id  = "livox_frame";
+  if (_enable_livox_frame_tf_pub){
+    geometry_msgs::TransformStamped tf_livox2world;
+    tf_livox2world.header.stamp    = tf_djibody2world.header.stamp;
+    tf_livox2world.header.frame_id = "world";
+    tf_livox2world.child_frame_id  = "livox_frame";
 
-  Eigen::Vector3d    eural_angle(-quaternion_data_.x(), quaternion_data_.y(), -quaternion_data_.z());
-  Eigen::Quaterniond q = euler2Quaternion(eural_angle);
+    Eigen::Vector3d    eural_angle(-quaternion_data_.x(), quaternion_data_.y(), -quaternion_data_.z());
+    Eigen::Quaterniond q = euler2Quaternion(eural_angle);
 
-  tf_livox2world.transform.rotation.x = q.x();
-  tf_livox2world.transform.rotation.y = q.y();
-  tf_livox2world.transform.rotation.z = q.z();
-  tf_livox2world.transform.rotation.w = q.w();
-  tf_livox2world.transform.translation.x = xyz_pos_neu_.x();
-  tf_livox2world.transform.translation.y = xyz_pos_neu_.y();
-  tf_livox2world.transform.translation.z = xyz_pos_neu_.z();
-  tf_broadcaster_.sendTransform(tf_livox2world);
+    tf_livox2world.transform.rotation.x = q.x();
+    tf_livox2world.transform.rotation.y = q.y();
+    tf_livox2world.transform.rotation.z = q.z();
+    tf_livox2world.transform.rotation.w = q.w();
+    tf_livox2world.transform.translation.x = xyz_pos_neu_.x();
+    tf_livox2world.transform.translation.y = xyz_pos_neu_.y();
+    tf_livox2world.transform.translation.z = xyz_pos_neu_.z();
+    tf_broadcaster_.sendTransform(tf_livox2world);
+  }
 }
 
 void PayloadSdkInterface::publishImuMavrosData(){
@@ -855,6 +858,15 @@ void PayloadSdkInterface::feedGPSDetailsDataProcess(){
     INFO_MSG_GREEN("[DJI]: GPS position accuracy is good, ready to fly !");
     INFO_MSG_GREEN("[DJI]: POSE FUSED DATA INIT -> " << position_fused_data_.transpose());
     INFO_MSG_GREEN("[DJI]: GPS INIT position: " << position_fused_data_.transpose());
+
+    INFO_MSG_CYAN(" ______    ___  _____         ______  _____  _____  \n"
+                  " |  _  \\  |_  ||_   _|        | ___ \\|  _  |/  ___| \n"
+                  " | | | |    | |  | |   ______ | |_/ /| | | |\\ `--.  \n"
+                  " | | | |    | |  | |  |______||    / | | | | `--. \\ \n"
+                  " | |/ / /\\__/ / _| |_         | |\\ \\ \\ \\_/ //\\__/ / \n"
+                  " |___/  \\____/  \\___/         \\_| \\_| \\___/ \\____/  \n"
+                  "                                                    \n"
+                  "                                                    ");
   }
 }
 

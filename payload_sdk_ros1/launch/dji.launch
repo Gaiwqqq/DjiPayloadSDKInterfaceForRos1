@@ -15,9 +15,10 @@
         <param name="dji/livox_trans_matrix/y" value="0.0" type="double"/>
         <param name="dji/livox_trans_matrix/z" value="0.0" type="double"/>
 
-        <param name="dji/vel_ctrl_smooth" value="true" type="bool"/>
+        <param name="dji/enable_vel_ctrl_smooth" value="true" type="bool"/>
         <param name="dji/vel_ctrl_acc_limit" value="5" type="double"/>
         <param name="dji/vel_ctrl_yaw_dot_dot_limit" value="30" type="double"/>
+        <param name="dji/enable_livox_frame_tf_pub" value="true" type="bool"/>
 
     </node>
 

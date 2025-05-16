@@ -178,13 +178,13 @@ private:
   ros::Time                     gear_change_start_time_;
   unsigned int                  gear_moniting_phase_{0};   // 0 -> 1 -> 2 -> 0
 
-  bool                          vel_ctrl_smooth_flag_;
-
-  // throttles
+  // params
   double                        _gps_accuracy_thres;
   double                        _data_loop_rate;
   Eigen::Matrix4d               _livox2body_matrix;
   double                        _max_ctrl_acc, _max_ctrl_yaw_dot_dot;
+  bool                          _enable_livox_frame_tf_pub;
+  bool                          _enable_vel_ctrl_smooth;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
