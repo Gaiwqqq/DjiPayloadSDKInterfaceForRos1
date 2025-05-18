@@ -176,7 +176,7 @@ private:
   string                        ctrl_cmd_type_;
 
   ros::Time                     gear_change_start_time_;
-  unsigned int                  gear_moniting_phase_{0};   // 0 -> 1 -> 2 -> 0
+  unsigned int                  gear_moniting_phase_{0};
 
   // params
   double                        _gps_accuracy_thres;

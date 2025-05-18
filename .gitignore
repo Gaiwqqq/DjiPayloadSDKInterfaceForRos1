@@ -1,2 +1,4 @@
 ./payload_sdk_ros1/cmake-build-debug
 ./CMakeLists.txt
+./cmake-build-debug/
+./.vscode/

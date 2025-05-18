@@ -791,7 +791,7 @@ void PayloadSdkInterface::feedRCDataProcess() {
     if (dji_rc_data_.gear <= DJI_RC_GEAR_LEFT_THR){
       ros::Time cur_time = ros::Time::now();
       double duration = (cur_time - gear_change_start_time_).toSec();
-      if (duration >= 3.0) {
+      if (duration >= 0.5) {
         switchCtrlDevice(CTRL_DEVICE_RC);
         reset_flag = true;
       }
