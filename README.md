@@ -28,7 +28,7 @@ DJI-ROS 这一功能包，是基于 DJI-Payload-SDK-Interface 功能包，为 RO
   - 自定义话题输入，根据自定义消息控制无人机飞行 （目前仅开发了体轴系vel控制）
   - 使用mavros给定话题控制无人机飞行（目前仅开发了体轴系vel控制）
 
-<hr style="border: 2px solid green;">
+---
 ## 0 快速上手
 
 ### step0. Make sure your payload-sdk is correctly connected
@@ -45,7 +45,15 @@ catkin_make
 source devel/setup.bash 
 roslaunch payload_sdk_ros1 dji.launch
 ```
-<hr style="border: 2px solid green;">
+### Step3. Offboard control mode (use rc gear)
+```shell
+# 将遥控器左手拨轮向右拨到底，持续3s   （此时无人机进入offboard模式，默认vel-body-ctrl）
+
+# 将遥控器左手拨轮向左拨到底，持续0.5s （此时无人机进入RC遥控模式）
+```
+
+
+---
 ## 1 坐标系定义
 
 

@@ -5,7 +5,7 @@
         <param name="dji/livox_sub_topic" value="/livox/lidar" type="string"/>
         <param name="dji/livox_trans_enable" value="false" type="bool"/>
         <param name="dji/gps_accuracy_threshold" value="10000.0" type="double"/> <!-- 位置精度因子, <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱 -->
-        <param name="dji/data_loop_rate" value="10.0" type="double"/>
+        <param name="dji/data_loop_rate" value="50.0" type="double"/>
         <param name="dji/cmd_type" value="60" type="string"/>      <!-- mavros OR 60 -->
 
         <param name="dji/livox_trans_matrix/pitch" value="-15.0" type="double"/>
@@ -16,7 +16,10 @@
         <param name="dji/livox_trans_matrix/z" value="0.0" type="double"/>
 
         <param name="dji/enable_vel_ctrl_smooth" value="true" type="bool"/>
+        <param name="dji/enable_vel_ctrl_vel_limit" value="true" type="bool"/>
+        <param name="dji/vel_ctrl_vel_limit" value="1.0" type="double"/>
         <param name="dji/vel_ctrl_acc_limit" value="5" type="double"/>
+        <param name="dji/vel_ctrl_yaw_dot_limit" value="30" type="double"/>
         <param name="dji/vel_ctrl_yaw_dot_dot_limit" value="30" type="double"/>
         <param name="dji/enable_livox_frame_tf_pub" value="true" type="bool"/>
 

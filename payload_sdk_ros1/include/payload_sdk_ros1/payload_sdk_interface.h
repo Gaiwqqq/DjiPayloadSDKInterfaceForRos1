@@ -48,6 +48,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <std_msgs/Float64.h>
 #include <geometry_msgs/Twist.h>
+#include <sensor_msgs/NavSatFix.h>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -101,7 +102,8 @@ private:
   ros::Timer      dji_data_read_timer_, dji_flyctrl_pub_timer_;
   ros::Subscriber ctrl_cmd_sub_, offboard_switch_sub_, custom_60_cmd_sub_;
   ros::Publisher  imu_60_pub_, mimicking_flight_60_height_pub_, odom_trans_pub_, imu_trans_pub_;
-  ros::Publisher  vis_pub_, path_vis_pub_;
+  ros::Publisher  gps_init_pos_pub_;
+  ros::Publisher  vel_vis_pub_, path_vis_pub_, vel_ctrl_vis_pub_;
   ros::Subscriber livox_sub_;
   ros::Publisher  livox_pub_;
 
@@ -148,10 +150,11 @@ private:
   Eigen::Vector3d              velocity_data_neu_, velocity_data_neu_vis_; // (vx, vy, vz)
   Eigen::Vector3d              velocity_data_frd_, velocity_data_frd_vis_; // (vx, vy, vz)
   Eigen::Vector3d              velocity_data_flu_;       // (vx, vy, vz)
+  Eigen::Vector3d              velocity_data_fru_;       // (vx, vy, vz)
   Eigen::Vector3d              gps_position_data_;       // (latitude, longitude, altitude)
   Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
   double                       altitude_fused_data_;     //
-  Eigen::Quaterniond           quaternion_world_;        // (qx, qy, qz, qw)
+  Eigen::Quaterniond           quaternion_world_, quaternion_mavros_odom_;        // (qx, qy, qz, qw)
 
   Eigen::Vector3d              neu_pos_init_;            // (latitude, longitude, altitude)
   Eigen::Vector3d              xyz_pos_neu_;             // (x, y, z)
@@ -171,8 +174,8 @@ private:
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
   ros::Time                     last_ctrl_cmd_time_, last_pos_fused_recv_time_;
-  ros::Time                     last_dji_cmd_pub_time_;
-  bool                          gps_ready_;
+  ros::Time                     last_dji_cmd_pub_time_, last_dji_data_vis_time_;
+  bool                          gps_ready_, gps_init_finished_;
   string                        ctrl_cmd_type_;
 
   ros::Time                     gear_change_start_time_;
@@ -182,9 +185,10 @@ private:
   double                        _gps_accuracy_thres;
   double                        _data_loop_rate;
   Eigen::Matrix4d               _livox2body_matrix;
+  double                        _max_ctrl_vel, _max_ctrl_yaw_dot;
   double                        _max_ctrl_acc, _max_ctrl_yaw_dot_dot;
   bool                          _enable_livox_frame_tf_pub;
-  bool                          _enable_vel_ctrl_smooth;
+  bool                          _enable_vel_ctrl_smooth, _enable_vel_ctrl_vel_limit;
 
   // callbacks
   void djiDataReadCallback(const ros::TimerEvent& event);
@@ -205,6 +209,7 @@ private:
   void publishImu60Data();
   void publishOdomData();
   void publishImuMavrosData();
+  void publishGPSInitData();
 
   // functions
   bool djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
