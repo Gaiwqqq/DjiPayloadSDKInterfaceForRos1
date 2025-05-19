@@ -190,7 +190,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW);
   djiDestroySubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC);
   djiDestroySubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA);
-  INFO_MSG_CYAN("[DJI]: Destoried all subscription topics");
+  INFO_MSG_CYAN("***[DJI]: Destoried all subscription topics\n");
 
   djiStat_ = DjiFcSubscription_DeInit();
   if (djiStat_ != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
@@ -1071,9 +1071,9 @@ void PayloadSdkInterface::drawVel() {
 
   Eigen::Vector3d    eural_angle_odom(0.0, 0.0, -quaternion_data_.z());
   Eigen::Quaterniond q = euler2Quaternion(eural_angle_odom);
-  Eigen::Vector3d arrow_pt_end(xyz_pos_neu_.x() + vel_ctrl_cmd_data_frd_fix_[0] * 1.0,
-                               xyz_pos_neu_.y() - vel_ctrl_cmd_data_frd_fix_[1] * 1.0,
-                               xyz_pos_neu_.z() - vel_ctrl_cmd_data_frd_fix_[2] * 1.0);
+  Eigen::Vector3d arrow_pt_end(vel_ctrl_cmd_data_frd_fix_[0] * 1.0,
+                               - vel_ctrl_cmd_data_frd_fix_[1] * 1.0,
+                               vel_ctrl_cmd_data_frd_fix_[2] * 1.0);
   Eigen::Vector3d transformed_point = q * arrow_pt_end;
   marker.header.frame_id = "world";
   marker.ns     = "velocity_ctrl_body";
@@ -1081,9 +1081,9 @@ void PayloadSdkInterface::drawVel() {
   marker.points[0].x = xyz_pos_neu_.x();
   marker.points[0].y = xyz_pos_neu_.y();
   marker.points[0].z = xyz_pos_neu_.z();
-  marker.points[1].x = transformed_point.x();
-  marker.points[1].y = transformed_point.y();
-  marker.points[1].z = transformed_point.z();
+  marker.points[1].x = xyz_pos_neu_.x() + transformed_point.x();
+  marker.points[1].y = xyz_pos_neu_.y() + transformed_point.y();
+  marker.points[1].z = xyz_pos_neu_.z() + transformed_point.z();
   marker.color.r = 0.0;
   marker.color.g = 0.0;
   marker.color.b = 1.0;
