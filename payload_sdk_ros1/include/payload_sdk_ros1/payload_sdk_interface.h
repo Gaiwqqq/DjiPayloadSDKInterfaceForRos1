@@ -42,6 +42,7 @@
 #include <flyctrl/flyctrl_send.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 #include <nav_msgs/Path.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <livox_ros_driver/CustomMsg.h>
@@ -103,7 +104,7 @@ private:
   ros::Subscriber ctrl_cmd_sub_, offboard_switch_sub_, custom_60_cmd_sub_;
   ros::Publisher  imu_60_pub_, mimicking_flight_60_height_pub_, odom_trans_pub_, imu_trans_pub_;
   ros::Publisher  gps_init_pos_pub_;
-  ros::Publisher  vel_vis_pub_, path_vis_pub_, vel_ctrl_vis_pub_;
+  ros::Publisher  vel_vis_pub_, path_vis_pub_, vel_ctrl_vis_pub_, avoid_obs_vis_pub_;
   ros::Subscriber livox_sub_;
   ros::Publisher  livox_pub_;
 
@@ -130,6 +131,7 @@ private:
   T_DjiFcSubscriptionGpsDetails        dji_gps_details_data_{0};
   T_DjiFcSubscriptionControlDevice     dji_ctrl_device_data_{0};
   T_DjiFcSubscriptionHeightFusion      dji_height_fusion_data_{0};
+  T_DjiFcSubscriptionAvoidData         dji_avoid_data_{0};
 
   T_DjiFcSubscriptionRTKConnectStatus  dji_rtk_connection_stat_data_{0};
   T_DjiFcSubscriptionRtkPosition       dji_rtk_pos_data_{0};
@@ -154,11 +156,12 @@ private:
   Eigen::Vector3d              gps_position_data_;       // (latitude, longitude, altitude)
   Eigen::Vector3d              position_fused_data_;     // (latitude, longitude, altitude)
   double                       altitude_fused_data_;     //
-  Eigen::Quaterniond           quaternion_world_, quaternion_mavros_odom_;        // (qx, qy, qz, qw)
+  Eigen::Quaterniond           quaternion_world_, quaternion_mavros_odom_, quaternion_mavros_odom_ignore_pitchandroll_;
 
   Eigen::Vector3d              neu_pos_init_;            // (latitude, longitude, altitude)
   Eigen::Vector3d              xyz_pos_neu_;             // (x, y, z)
   double                       gps_pos_accuracy_;        // <1: 理想, 1-2: 优秀, 2-5: 良好, 5-10: 中等, 10-20: 一般, >20: 弱。
+  double                       min_distance_to_obs_2d_, max_distance_to_obs_2d_;
 
   // ctrl cmd data
   Eigen::Vector4d              vel_ctrl_cmd_data_frd_raw_, vel_ctrl_cmd_data_frd_fix_;   // (vx, vy, vz, yaw_rate) -> FRD coordinate
@@ -170,6 +173,7 @@ private:
   // flags
   bool                          is_quaternion_disp_, ctrl_cmd_heartbeat_ready_, position_fused_ready_flag_;
   bool                          is_gps_convergent_, dji_ctrl_first_init_, dji_ctrl_init_success_;
+  bool                          ctrl_emerency_stop_;
   CtrlDevice                    cur_ctrl_device_;
   ctrlMode                      cur_ctrl_mode_;
   uint16_t                      mavros_cmd_type_mask_velctrl_only_;
@@ -198,13 +202,15 @@ private:
   void djiFlyCtrlPubCallback(const ros::TimerEvent& event);
   void livoxCallback(const livox_ros_driver::CustomMsg::ConstPtr& msg);
   void fullMotionStop();
-  void velCtrlSmooth(const ros::Time &cur_t);
+  void velCtrlSmooth(const ros::Time &cur_t, const double &max_ctrl_acc,
+                     const double &max_ctrl_yaw_dot_dot);
 
   void feedPositionDataProcess();
   void feedGPSDetailsDataProcess();
   void feedVelDataProcess();
   void feedQuaternionDataProcess();
   void feedRCDataProcess();
+  void feedAvoidDataProcess();
 
   void publishImu60Data();
   void publishOdomData();
@@ -224,6 +230,7 @@ private:
   void drawVel();
   void drawRangeCircles();
   void drawPath();
+  void drawAvoidData();
 
   void livoxTransInit();
   Eigen::Vector3d XYZ2LLA(const Eigen::Vector3d& xyz);

@@ -17,8 +17,11 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   dji_ctrl_init_success_        = false;
   gps_ready_                    = false;
   gps_init_finished_            = false;
+  ctrl_emerency_stop_           = false;
   vel_ctrl_cmd_data_frd_raw_    = Eigen::Vector4d::Zero();
   vel_ctrl_cmd_data_frd_fix_    = Eigen::Vector4d::Zero();
+  min_distance_to_obs_2d_       =   100000.0;
+  max_distance_to_obs_2d_       = - 100000.0;
 
   last_ctrl_cmd_time_         = ros::Time::now();
   last_pos_fused_recv_time_   = last_ctrl_cmd_time_;
@@ -98,6 +101,8 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
           djiCreateSubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC, freq_map[10], nullptr);
   dji_init_success =
           djiCreateSubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA, freq_map[10], nullptr);
+  dji_init_success =
+          djiCreateSubscription("avoid_data", DJI_FC_SUBSCRIPTION_TOPIC_AVOID_DATA, freq_map[50], nullptr);
 
   // -------------------- ros init --------------------------//
   std::string topic_nav_pub, topic_ctrl_sub, topic_livox_sub;
@@ -133,8 +138,10 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh, T_DjiOsalHandler *
   vel_ctrl_vis_pub_    = nh_.advertise<visualization_msgs::Marker>("/dji/vel_ctrl_vis", 2);
   path_vis_pub_        = nh_.advertise<nav_msgs::Path>("/dji/path_vis", 2);
   gps_init_pos_pub_    = nh_.advertise<sensor_msgs::NavSatFix>("/dji/gps_init_pos", 2);
+  avoid_obs_vis_pub_   = nh_.advertise<visualization_msgs::MarkerArray>("/dji/avoid_obs_vis", 2);
   mimicking_flight_60_height_pub_ = nh.advertise<std_msgs::Float64>("/temp_radio", 5);
   vel_ctrl_smooth_data_pub_       = nh_.advertise<geometry_msgs::Twist>("/vel_ctrl_smooth_data", 5);
+
 
   if (livox_trans_enable){
     livoxTransInit();
@@ -190,6 +197,7 @@ PayloadSdkInterface::~PayloadSdkInterface(){
   djiDestroySubscription("rtk_yaw", DJI_FC_SUBSCRIPTION_TOPIC_RTK_YAW);
   djiDestroySubscription("rc", DJI_FC_SUBSCRIPTION_TOPIC_RC);
   djiDestroySubscription("rc_with_flag", DJI_FC_SUBSCRIPTION_TOPIC_RC_WITH_FLAG_DATA);
+  djiDestroySubscription("avoid_data", DJI_FC_SUBSCRIPTION_TOPIC_AVOID_DATA);
   INFO_MSG_CYAN("***[DJI]: Destoried all subscription topics\n");
 
   djiStat_ = DjiFcSubscription_DeInit();
@@ -466,6 +474,17 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
     feedRCDataProcess();
   }
 
+  djiStat_ = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_AVOID_DATA,
+                                                     (uint8_t *) &dji_avoid_data_,
+                                                     sizeof(T_DjiFcSubscriptionAvoidData),
+                                                     &dji_timestamp_data_);
+  if (djiStat_!= DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+    INFO_MSG_RED("[DJI]: get avoid data error, timestamp: "
+                         << dji_timestamp_data_.microsecond << " ms, error code: " << djiStat_);
+  }else {
+    feedAvoidDataProcess();
+  }
+
   // ----------------------- ROS publish -----------------------------//
 
   ros::Time cur_t = ros::Time::now();
@@ -477,6 +496,7 @@ void PayloadSdkInterface::djiDataReadCallback(const ros::TimerEvent& event){
   if (cur_t - last_dji_data_vis_time_ >= ros::Duration(1.0 / 15.0)){
     drawVel();
     drawPath();
+    drawAvoidData();
     last_dji_data_vis_time_ = cur_t;
   }
 
@@ -496,15 +516,25 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
     INFO_MSG_RED("\n ***[DJI]: Warning, ctrl cmd data not received in 500ms, lost heartbeat !");
     ctrl_cmd_heartbeat_ready_ = false;
     vel_ctrl_cmd_data_frd_raw_ = Eigen::Vector4d::Zero();
-    vel_ctrl_cmd_data_frd_fix_ = Eigen::Vector4d::Zero();
-    fullMotionStop();
   }
   else if (time_duration < 0.5 && !ctrl_cmd_heartbeat_ready_){
     INFO_MSG_GREEN("\n ***[DJI]: ctrl cmd data heartbeat recovered !");
     last_dji_cmd_pub_time_    = cur_time;
     ctrl_cmd_heartbeat_ready_ = true;
   }
-  if (!ctrl_cmd_heartbeat_ready_) return;
+
+  if (!ctrl_cmd_heartbeat_ready_ && vel_ctrl_cmd_data_frd_fix_.norm() < 1e-3){
+    return ;
+  }
+  else if (!ctrl_cmd_heartbeat_ready_ && vel_ctrl_cmd_data_frd_fix_.norm() > 1e-3){
+    if (_enable_vel_ctrl_smooth){
+      velCtrlSmooth(cur_time, _max_ctrl_acc, _max_ctrl_yaw_dot_dot);
+    }else {
+      vel_ctrl_cmd_data_frd_fix_ = Eigen::Vector4d::Zero();
+      vel_ctrl_cmd_data_frd_raw_ = Eigen::Vector4d::Zero();
+      fullMotionStop();
+    }
+  }
 
   if (cur_ctrl_mode_ == OFFBOARD_VEL_BODY){
     if (ctrl_cmd_type_ == "mavros"){
@@ -514,7 +544,7 @@ void PayloadSdkInterface::djiFlyCtrlPubCallback(const ros::TimerEvent& event){
         return;
       }
     }
-    velCtrlSmooth(cur_time);
+    velCtrlSmooth(cur_time, _max_ctrl_acc, _max_ctrl_yaw_dot_dot);
     T_DjiFlightControllerJoystickCommand joystick_cmd =
             {static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.x()),
              static_cast<dji_f32_t>(vel_ctrl_cmd_data_frd_fix_.y()),
@@ -590,7 +620,8 @@ void PayloadSdkInterface::custom60CmdCallback(const flyctrl::flyctrl_send::Const
   vel_ctrl_cmd_data_frd_raw_[3] =  msg->r_sp; // dji : deg/s 逆时针方向为正
 }
 
-void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
+void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t, const double &max_ctrl_acc,
+                                        const double &max_ctrl_yaw_dot_dot) {
   if (!_enable_vel_ctrl_smooth){
     vel_ctrl_cmd_data_frd_fix_ = vel_ctrl_cmd_data_frd_raw_;
     if (_enable_vel_ctrl_vel_limit){
@@ -606,7 +637,7 @@ void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
   // acc limit
   Eigen::Vector4d last_cmd  = vel_ctrl_cmd_data_frd_fix_;
   Eigen::Vector3d delta_vel = vel_ctrl_cmd_data_frd_raw_.block<3, 1>(0, 0) - last_cmd.block<3, 1>(0, 0);
-  double max_delta_vel      = _max_ctrl_acc * (cur_t - last_dji_cmd_pub_time_).toSec();
+  double max_delta_vel      = max_ctrl_acc * (cur_t - last_dji_cmd_pub_time_).toSec();
   if (delta_vel.norm() > max_delta_vel) {
     delta_vel.normalize();
     delta_vel *= max_delta_vel;
@@ -616,7 +647,7 @@ void PayloadSdkInterface::velCtrlSmooth(const ros::Time &cur_t) {
 
   // yaw dot dot limit
   double delta_yaw_dot = vel_ctrl_cmd_data_frd_raw_[3] - last_cmd[3];
-  double max_delta_yaw_rate = _max_ctrl_yaw_dot_dot * (cur_t - last_dji_cmd_pub_time_).toSec();
+  double max_delta_yaw_rate = max_ctrl_yaw_dot_dot * (cur_t - last_dji_cmd_pub_time_).toSec();
   if (fabs(delta_yaw_dot) > max_delta_yaw_rate) {
     delta_yaw_dot = delta_yaw_dot > 0 ? max_delta_yaw_rate : -max_delta_yaw_rate;
     vel_ctrl_cmd_data_frd_fix_[3] = last_cmd[3] + delta_yaw_dot;
@@ -741,6 +772,19 @@ void PayloadSdkInterface::publishOdomData(){
   tf_djibody2world.transform.translation.z = xyz_pos_neu_.z();
   tf_broadcaster_.sendTransform(tf_djibody2world);
 
+  geometry_msgs::TransformStamped tf_djibodyaw2world;
+  tf_djibodyaw2world.header.stamp    = tf_djibody2world.header.stamp;
+  tf_djibodyaw2world.header.frame_id = "world";
+  tf_djibodyaw2world.child_frame_id  = "dji_body_yaw";
+  tf_djibodyaw2world.transform.rotation.x = quaternion_mavros_odom_ignore_pitchandroll_.x();
+  tf_djibodyaw2world.transform.rotation.y = quaternion_mavros_odom_ignore_pitchandroll_.y();
+  tf_djibodyaw2world.transform.rotation.z = quaternion_mavros_odom_ignore_pitchandroll_.z();
+  tf_djibodyaw2world.transform.rotation.w = quaternion_mavros_odom_ignore_pitchandroll_.w();
+  tf_djibodyaw2world.transform.translation.x = xyz_pos_neu_.x();
+  tf_djibodyaw2world.transform.translation.y = xyz_pos_neu_.y();
+  tf_djibodyaw2world.transform.translation.z = xyz_pos_neu_.z();
+  tf_broadcaster_.sendTransform(tf_djibodyaw2world);
+
   if (_enable_livox_frame_tf_pub){
     geometry_msgs::TransformStamped tf_livox2world;
     tf_livox2world.header.stamp    = tf_djibody2world.header.stamp;
@@ -792,6 +836,24 @@ void PayloadSdkInterface::publishGPSInitData() {
   gps_init_msg.longitude = neu_pos_init_.y();
   gps_init_msg.altitude  = neu_pos_init_.z();
   gps_init_pos_pub_.publish(gps_init_msg);
+}
+
+void PayloadSdkInterface::feedAvoidDataProcess() {
+  // avoid data [front, back, left, right]
+  std::vector<double>  avoid_data_2d       = {dji_avoid_data_.front, dji_avoid_data_.back,
+                                              dji_avoid_data_.left, dji_avoid_data_.right};
+  std::vector<uint8_t> avoid_data_2d_healt = {dji_avoid_data_.frontHealth, dji_avoid_data_.backHealth,
+                                              dji_avoid_data_.leftHealth, dji_avoid_data_.rightHealth};
+  double min_distance_to_obs_2d = std::numeric_limits<double>::max();
+  double max_distance_to_obs_2d = std::numeric_limits<double>::min();
+  for (int i = 0; i < 4; i++) {
+    if (avoid_data_2d_healt[i] == 1) {
+      min_distance_to_obs_2d = min(avoid_data_2d[i], min_distance_to_obs_2d);
+      max_distance_to_obs_2d = max(avoid_data_2d[i], max_distance_to_obs_2d);
+    }
+  }
+  min_distance_to_obs_2d_ = min_distance_to_obs_2d;
+  max_distance_to_obs_2d_ = max_distance_to_obs_2d;
 }
 
 void PayloadSdkInterface::feedRCDataProcess() {
@@ -943,6 +1005,9 @@ void PayloadSdkInterface::feedQuaternionDataProcess() {
 
   Eigen::Vector3d    eural_angle_odom(-quaternion_data_.x(), quaternion_data_.y(), -quaternion_data_.z());
   quaternion_mavros_odom_ = euler2Quaternion(eural_angle_odom);
+
+  Eigen::Vector3d    eural_angle_odom_ignore_pitchandroll(0.0, 0.0, -quaternion_data_.z());
+  quaternion_mavros_odom_ignore_pitchandroll_ = euler2Quaternion(eural_angle_odom_ignore_pitchandroll);
 }
 
 bool PayloadSdkInterface::djiCreateSubscription(std::string topic_name, E_DjiFcSubscriptionTopic topic,
@@ -1147,6 +1212,55 @@ void PayloadSdkInterface::drawPath() {
     path_vis_data_.poses.push_back(new_pos);
   }
   path_vis_pub_.publish(path_vis_data_);
+}
+
+void PayloadSdkInterface::drawAvoidData() {
+  auto eigenPt2GeometryPt = [] (const Eigen::Vector3d &pt) {
+    geometry_msgs::Point p;
+    p.x = pt.x();
+    p.y = pt.y();
+    p.z = pt.z();
+    return p;
+  };
+
+  visualization_msgs::MarkerArray marker_array;
+  std::vector<double> avoid_data_2d = {dji_avoid_data_.front, dji_avoid_data_.back,
+                                       dji_avoid_data_.left, dji_avoid_data_.right};
+  std::vector<Eigen::Vector3d> line_pt_map = {Eigen::Vector3d()};
+  visualization_msgs::Marker line_list;
+  line_list.header.frame_id = "dji_body_yaw"; // ignore pitch & roll
+  line_list.ns              = "avoid_data";
+  line_list.id              = 0;
+  line_list.type            = visualization_msgs::Marker::LINE_LIST;
+  line_list.action          = visualization_msgs::Marker::ADD;
+  line_list.header.stamp    = ros::Time::now();
+  line_list.scale.x         = 0.2;
+  line_list.color.a         = 1.0;
+  if (min_distance_to_obs_2d_ >= 3.0){
+    line_list.color.r         = 0.596;
+    line_list.color.g         = 0.984;
+    line_list.color.b         = 0.596;
+  }else {
+    line_list.color.r         = 1.0;
+    line_list.color.g         = 0.0;
+    line_list.color.b         = 0.0;
+  }
+  for (auto & avoid_data : avoid_data_2d)
+    if (avoid_data > 20.0) avoid_data = 20.0;
+
+  // left_forword, right_forward, right_back, left_back
+  geometry_msgs::Point p_list[4];
+  p_list[0] = eigenPt2GeometryPt(Eigen::Vector3d(avoid_data_2d[0], avoid_data_2d[2], 0.0));
+  p_list[1] = eigenPt2GeometryPt(Eigen::Vector3d(avoid_data_2d[0], -avoid_data_2d[3], 0.0));
+  p_list[2] = eigenPt2GeometryPt(Eigen::Vector3d(-avoid_data_2d[1], -avoid_data_2d[3], 0.0));
+  p_list[3] = eigenPt2GeometryPt(Eigen::Vector3d(-avoid_data_2d[1], avoid_data_2d[2], 0.0));
+
+  for (int i = 0; i < 4; i++){
+    line_list.points.push_back(p_list[i]);
+    line_list.points.push_back(p_list[(i+1)%4]);
+  }
+  marker_array.markers.push_back(line_list);
+  avoid_obs_vis_pub_.publish(marker_array);
 }
 
 Eigen::Vector3d PayloadSdkInterface::XYZ2LLA(const Eigen::Vector3d& xyz){
