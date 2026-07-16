@@ -14,6 +14,7 @@ int main(int argc, char **argv){
 
   PayloadSdkInterface::Ptr payloadSdkInterface = make_shared<PayloadSdkInterface>(nh, osalHandler);
 
+
   // DjiUser_RunFlightControllerSample();
   // DjiTest_FcSubscriptionRunSample();
 

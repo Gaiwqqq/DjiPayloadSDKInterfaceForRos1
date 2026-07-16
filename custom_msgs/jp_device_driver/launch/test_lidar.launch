@@ -1,0 +1,11 @@
+<launch>
+    <!-- 定义一个参数用来控制是否启动 RViz. 默认不启动 -->
+    <arg name="use_rviz" default="false" />
+    <!-- 激光雷达 -->
+    <node pkg="jp_device_driver" type="jp_device_driver_test_lidar" name="jp_device_driver_test_lidar" output="screen" required="true" />
+
+    <!-- 如果 use_rviz 参数为 true，则启动 RViz -->
+    <group if="$(arg use_rviz)">
+        <node pkg="rviz" type="rviz" name="rviz" output="screen" args="-d $(find jp_device_driver)/config/jp_lidar_rviz.rviz" />
+    </group>
+</launch>

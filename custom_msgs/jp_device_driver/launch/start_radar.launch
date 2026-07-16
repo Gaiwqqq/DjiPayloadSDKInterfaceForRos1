@@ -1,0 +1,16 @@
+<launch>
+    <!-- 毫米波雷达 -->
+    <!-- 设定串口参数 -->
+    <arg name="serial_port" default="/dev/ttyS9" />
+    <arg name="baud_rate" default="57600"/>
+    <!-- 盲区距离-->
+    <arg name="blind_area" default="50"/>
+    <arg name="hight_air_mode" default= "false"/>
+    <node pkg="jp_device_driver" type="jp_device_driver_radar" name="jp_device_driver_radar" output="screen" required="true">
+        <param name="radar_serial_port" type="string" value="$(arg serial_port)" />
+        <param name="radar_baud_rate" value="$(arg baud_rate)"/>
+        <param name="blind_area" value="$(arg blind_area)" />
+        <param name="hight_air_mode" value="$(arg hight_air_mode)" />
+    </node>
+
+</launch>

@@ -1,0 +1,5 @@
+<launch>
+    <!-- 激光雷达 -->
+    <node pkg="jp_device_driver" type="jp_device_driver_lidar" name="jp_device_driver_lidar" output="screen" required="true"/>
+
+</launch>

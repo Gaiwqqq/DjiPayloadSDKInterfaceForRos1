@@ -2,3 +2,8 @@
 ./CMakeLists.txt
 ./cmake-build-debug/
 ./.vscode/
+./.cache/
+./.catkin_tools/
+./.vscode/
+./build/
+./devel/
