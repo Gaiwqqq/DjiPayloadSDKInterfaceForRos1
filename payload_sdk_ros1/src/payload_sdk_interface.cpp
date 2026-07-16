@@ -103,7 +103,7 @@ PayloadSdkInterface::PayloadSdkInterface(ros::NodeHandle &nh,
       "flight_mode", DJI_FC_SUBSCRIPTION_TOPIC_STATUS_DISPLAYMODE, freq_map[5],
       nullptr);
   dji_init_success = djiCreateSubscription(
-      "ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICs, freq_map[1],
+      "ctrl_device", DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, freq_map[1],
       nullptr);
   dji_init_success = djiCreateSubscription(
       "rtk_state", DJI_FC_SUBSCRIPTION_TOPIC_RTK_CONNECT_STATUS, freq_map[5],
